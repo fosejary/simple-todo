@@ -1,0 +1,69 @@
+{
+  "expo": {
+    "name": "SimpleTodo",
+    "slug": "SimpleTodo",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "scheme": "simpletodo",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#2563EB"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.zeroninelab.simpletodo.app"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#2563EB"
+      },
+      "edgeToEdgeEnabled": true,
+      "package": "com.zeroninelab.simpletodo.app",
+      "versionCode": 1,
+      "permissions": []
+    },
+    "web": {
+      "favicon": "./assets/favicon.png",
+      "bundler": "metro"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "react-native-android-widget",
+        {
+          "widgets": [
+            {
+              "name": "SimpleTodoWidget",
+              "label": "SimpleTodo - 오늘 할일",
+              "minWidth": "250dp",
+              "minHeight": "120dp",
+              "description": "오늘의 할일을 홈 화면에서 확인하세요",
+              "previewImage": "./assets/widget-preview.png",
+              "updatePeriodMillis": 1800000,
+              "resizeMode": "horizontal|vertical"
+            }
+          ]
+        }
+      ],
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidAppId": "ca-app-pub-7583212045442485~8015568499",
+          "iosAppId": "ca-app-pub-7583212045442485~8015568499"
+        }
+      ],
+      "expo-localization"
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "69c7962b-1fb0-49a5-8c95-fa24863764db"
+      }
+    }
+  }
+}

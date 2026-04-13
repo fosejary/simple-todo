@@ -1,0 +1,38 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc:*)",
+      "Bash(npx create-expo-app@latest . -t blank-typescript --no-install)",
+      "Read(//private/tmp/**)",
+      "Bash(npx create-expo-app@latest SimpleTodoTemp -t blank-typescript --no-install)",
+      "Bash(cp -r /tmp/SimpleTodoTemp/* /Users/miraepmp/Projects/SimpleTodo/)",
+      "Bash(cp /tmp/SimpleTodoTemp/.gitignore /Users/miraepmp/Projects/SimpleTodo/)",
+      "Bash(npm install:*)",
+      "Bash(npx expo:*)",
+      "Bash(npx tsc:*)",
+      "Bash(pip3 show:*)",
+      "Bash(python3:*)",
+      "mcp__plugin_playwright_playwright__browser_navigate",
+      "mcp__plugin_playwright_playwright__browser_take_screenshot",
+      "mcp__plugin_playwright_playwright__browser_resize",
+      "Bash(echo \"EXIT: $?\")",
+      "mcp__plugin_playwright_playwright__browser_snapshot",
+      "mcp__plugin_playwright_playwright__browser_click",
+      "mcp__plugin_playwright_playwright__browser_evaluate",
+      "Bash(./node_modules/.bin/tsc --noEmit)",
+      "Bash(/Users/miraepmp/Projects/SimpleTodo/node_modules/.bin/tsc --noEmit --project /Users/miraepmp/Projects/SimpleTodo/tsconfig.json)",
+      "Bash(/Users/miraepmp/Projects/SimpleTodo/node_modules/.bin/tsc --noEmit -p /Users/miraepmp/Projects/SimpleTodo/tsconfig.json)",
+      "Bash(node:*)",
+      "Bash(echo \"EXIT_CODE=$?\")",
+      "Bash(echo \"EXIT CODE: $?\")",
+      "Bash(curl -s \"https://api.expo.dev/v2/builds/ec9fb3b2-0ec3-4f43-ae08-0e91c7a32abd\")",
+      "Bash(eas credentials:*)",
+      "Bash(git remote:*)",
+      "Bash(git -C /Users/miraepmp/Projects/SimpleTodo remote set-url origin https://github.com/fosejary/simple-todo.git)",
+      "Bash(git -C /Users/miraepmp/Projects/SimpleTodo remote -v)",
+      "Bash(git -C /Users/miraepmp/Projects/SimpleTodo remote add origin https://github.com/fosejary/simple-todo.git)",
+      "Bash(git -C /Users/miraepmp/Projects/SimpleTodo status --short)",
+      "Bash(git add:*)"
+    ]
+  }
+}

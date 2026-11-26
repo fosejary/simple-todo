@@ -1,8 +1,8 @@
 import { useColorScheme } from 'react-native';
-import { Colors } from '@/constants/theme';
+import { Colors, type ThemeColors } from '@/constants/theme';
 import { useSettingsStore } from '@/stores/settingsStore';
 
-export type ThemeColors = typeof Colors.light;
+export type { ThemeColors };
 
 export function useTheme(): { colors: ThemeColors; isDark: boolean } {
   const systemScheme = useColorScheme();

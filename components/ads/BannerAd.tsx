@@ -5,6 +5,7 @@ import {
   BannerAdSize,
   TestIds,
 } from 'react-native-google-mobile-ads';
+import { useAdsConsent } from '@/lib/adsConsent';
 
 const BANNER_AD_UNIT_ID = 'ca-app-pub-7583212045442485/6860825967';
 
@@ -18,6 +19,8 @@ function getAdUnitId(): string {
 export default function BannerAdComponent() {
   const [adLoaded, setAdLoaded] = useState(false);
   const [adError, setAdError] = useState(false);
+  // No ad request until UMP consent has been gathered and allows it.
+  const canRequestAds = useAdsConsent((s) => s.ready && s.canRequestAds);
 
   const onAdLoaded = useCallback(() => {
     setAdLoaded(true);
@@ -29,7 +32,7 @@ export default function BannerAdComponent() {
     setAdError(true);
   }, []);
 
-  if (adError) {
+  if (adError || !canRequestAds) {
     return <View />;
   }
 

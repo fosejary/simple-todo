@@ -1,8 +1,9 @@
 import React from 'react';
-import { View, Text, Pressable, StyleSheet } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import { View, Pressable, StyleSheet } from 'react-native';
+import { Text } from '@/components/atoms/AppText';
+import { Icon } from '@/components/atoms/Icon';
 import { useTheme } from '@/hooks/useTheme';
-import { Typography, Spacing } from '@/constants/theme';
+import { Spacing, Typography } from '@/constants/theme';
 
 interface SectionHeaderProps {
   title: string;
@@ -10,6 +11,7 @@ interface SectionHeaderProps {
   collapsible?: boolean;
   collapsed?: boolean;
   onToggle?: () => void;
+  action?: { label: string; onPress: () => void };
 }
 
 export function SectionHeader({
@@ -18,38 +20,43 @@ export function SectionHeader({
   collapsible = false,
   collapsed = false,
   onToggle,
+  action,
 }: SectionHeaderProps) {
   const { colors } = useTheme();
 
-  const content = (
-    <View style={styles.container}>
-      <View style={styles.labelRow}>
-        <Text style={[styles.title, { color: colors.textSecondary }]}>
-          {title}
-        </Text>
-        {count !== undefined && (
-          <View style={[styles.countBadge, { backgroundColor: colors.surfaceVariant }]}>
-            <Text style={[styles.countText, { color: colors.textSecondary }]}>
-              {count}
-            </Text>
-          </View>
-        )}
-      </View>
+  const label = (
+    <View style={styles.labelRow}>
+      <Text style={[styles.title, { color: colors.textPrimary }]}>{title}</Text>
+      {count !== undefined && (
+        <Text style={[styles.count, { color: colors.textTertiary }]}>{count}</Text>
+      )}
       {collapsible && (
-        <MaterialIcons
-          name={collapsed ? 'expand-more' : 'expand-less'}
-          size={18}
-          color={colors.textSecondary}
-        />
+        <Icon name={collapsed ? 'chevron-down' : 'chevron-up'} size={16} color={colors.textTertiary} />
       )}
     </View>
   );
 
-  if (collapsible && onToggle) {
-    return <Pressable onPress={onToggle}>{content}</Pressable>;
-  }
-
-  return content;
+  return (
+    <View style={styles.container}>
+      {collapsible && onToggle ? (
+        <Pressable
+          onPress={onToggle}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityState={{ expanded: !collapsed }}
+        >
+          {label}
+        </Pressable>
+      ) : (
+        label
+      )}
+      {action && (
+        <Pressable onPress={action.onPress} hitSlop={10} accessibilityRole="button">
+          <Text style={[styles.action, { color: colors.accentText }]}>{action.label}</Text>
+        </Pressable>
+      )}
+    </View>
+  );
 }
 
 const styles = StyleSheet.create({
@@ -58,29 +65,26 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     paddingHorizontal: Spacing.lg,
-    paddingVertical: Spacing.xs + 2,
-    marginTop: Spacing.sm,
+    paddingTop: Spacing.xl,
+    paddingBottom: Spacing.xs,
   },
   labelRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.xs,
+    gap: 6,
   },
   title: {
-    fontSize: 12,
-    fontWeight: '700' as const,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
+    ...Typography.label,
   },
-  countBadge: {
-    paddingHorizontal: 6,
-    paddingVertical: 1,
-    borderRadius: 8,
-    minWidth: 20,
-    alignItems: 'center',
+  count: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '500',
+    fontVariant: ['tabular-nums'],
   },
-  countText: {
-    fontSize: 11,
-    fontWeight: '600' as const,
+  action: {
+    fontSize: 14,
+    lineHeight: 20,
+    fontWeight: '500',
   },
 });

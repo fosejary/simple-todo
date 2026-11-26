@@ -1,19 +1,202 @@
 import React, { useState, useCallback, useMemo } from 'react';
-import { View, FlatList, Text, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
-import { format } from 'date-fns';
+import { View, Pressable, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import { format, subDays } from 'date-fns';
 import { useTranslation } from 'react-i18next';
 import { getDateLocale } from '@/i18n/dateLocale';
+import { Text, TextInput } from '@/components/atoms/AppText';
+import { Icon } from '@/components/atoms/Icon';
 import { ScreenContainer } from '@/components/layout/ScreenContainer';
 import { TodoDetailSheet } from '@/components/organisms/TodoDetailSheet';
-import { TodoItem } from '@/components/molecules/TodoItem';
+import { TodoSectionList, type TodoSection } from '@/components/organisms/TodoSectionList';
 import { QuickAddBar } from '@/components/molecules/QuickAddBar';
-import { SectionHeader } from '@/components/molecules/SectionHeader';
 import { EmptyState } from '@/components/molecules/EmptyState';
-import { StreakBadge } from '@/components/atoms/StreakBadge';
+import { SunArc } from '@/components/molecules/SunArc';
 import { useTheme } from '@/hooks/useTheme';
+import { useTodoActions } from '@/hooks/useTodoActions';
 import { useTodoStore } from '@/stores/todoStore';
-import { Spacing } from '@/constants/theme';
+import { Spacing, Radius, Typography } from '@/constants/theme';
+import { Todo, StreakData } from '@/lib/types';
+
+function computeStreak(streaks: Record<string, StreakData>): number {
+  let date = new Date();
+  const todayData = streaks[format(date, 'yyyy-MM-dd')];
+  if (!todayData || todayData.todos_completed === 0) date = subDays(date, 1);
+  let count = 0;
+  for (let i = 0; i < 3650; i++) {
+    const data = streaks[format(date, 'yyyy-MM-dd')];
+    if (!data || data.todos_completed === 0) break;
+    count++;
+    date = subDays(date, 1);
+  }
+  return count;
+}
+
+const bySortOrder = (a: Todo, b: Todo) => a.sort_order - b.sort_order;
+
+export default function TodayScreen() {
+  const { colors } = useTheme();
+  const { t } = useTranslation();
+  const today = format(new Date(), 'yyyy-MM-dd');
+  const dateLabel = format(new Date(), t('dateFormat.monthDayWeekday'), { locale: getDateLocale() });
+
+  const todos = useTodoStore((s) => s.todos);
+  const streaks = useTodoStore((s) => s.streaks);
+  const addTodo = useTodoStore((s) => s.addTodo);
+  const reorderTodos = useTodoStore((s) => s.reorderTodos);
+  const { moveToToday } = useTodoActions();
+
+  const [selectedTodoId, setSelectedTodoId] = useState<string | null>(null);
+  const [showCompleted, setShowCompleted] = useState(false);
+  const [showSearch, setShowSearch] = useState(false);
+  const [searchText, setSearchText] = useState('');
+
+  const { overdue, active, completed } = useMemo(() => {
+    const overdue: Todo[] = [];
+    const active: Todo[] = [];
+    const completed: Todo[] = [];
+    for (const todo of todos) {
+      if (todo.is_deleted || !todo.due_date) continue;
+      if (todo.due_date === today) {
+        (todo.is_completed ? completed : active).push(todo);
+      } else if (todo.due_date < today && !todo.is_completed) {
+        overdue.push(todo);
+      }
+    }
+    overdue.sort((a, b) => a.due_date!.localeCompare(b.due_date!) || bySortOrder(a, b));
+    active.sort(bySortOrder);
+    completed.sort((a, b) => (b.completed_at ?? '').localeCompare(a.completed_at ?? ''));
+    return { overdue, active, completed };
+  }, [todos, today]);
+
+  const streak = useMemo(() => computeStreak(streaks), [streaks]);
+
+  const query = searchText.trim().toLowerCase();
+  const isSearching = showSearch && query.length > 0;
+
+  const searchResults = useMemo(() => {
+    if (!isSearching) return [];
+    return todos
+      .filter(
+        (todo) =>
+          !todo.is_deleted &&
+          (todo.title.toLowerCase().includes(query) || todo.memo?.toLowerCase().includes(query))
+      )
+      .sort((a, b) => {
+        if (a.is_completed !== b.is_completed) return a.is_completed ? 1 : -1;
+        return (b.due_date ?? '').localeCompare(a.due_date ?? '');
+      });
+  }, [todos, query, isSearching]);
+
+  const handleAddTodo = useCallback((title: string) => addTodo({ title, due_date: today }), [today]);
+
+  const closeSearch = () => {
+    setShowSearch(false);
+    setSearchText('');
+  };
+
+  const sections: TodoSection[] = isSearching
+    ? [{ key: 'search', title: t('today.searchResults'), data: searchResults, showDate: true }]
+    : [
+        {
+          key: 'overdue',
+          title: t('today.sectionOverdue'),
+          data: overdue,
+          showDate: true,
+          action: {
+            label: t('today.moveAllToToday'),
+            onPress: () => moveToToday(overdue.map((x) => x.id)),
+          },
+        },
+        { key: 'active', title: t('today.sectionActive'), data: active },
+        {
+          key: 'completed',
+          title: t('today.sectionCompleted'),
+          data: completed,
+          collapsible: true,
+          collapsed: !showCompleted,
+          onToggle: () => setShowCompleted((v) => !v),
+        },
+      ];
+
+  const totalToday = active.length + completed.length;
+  const nothingAtAll = totalToday === 0 && overdue.length === 0;
+
+  let listHeader: React.ReactElement | null = null;
+  if (isSearching) {
+    listHeader =
+      searchResults.length === 0 ? (
+        <EmptyState icon="search" title={t('today.searchEmpty')} compact />
+      ) : null;
+  } else {
+    listHeader = <SunArc done={completed.length} total={totalToday} />;
+  }
+
+  return (
+    <ScreenContainer>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior="padding"
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
+      >
+        <View style={styles.topBar}>
+          {showSearch ? (
+            <View style={[styles.searchBar, { backgroundColor: colors.surfaceVariant }]}>
+              <Icon name="search" size={18} color={colors.textTertiary} />
+              <TextInput
+                style={[styles.searchInput, { color: colors.textPrimary }]}
+                placeholder={t('today.searchPlaceholder')}
+                placeholderTextColor={colors.textTertiary}
+                value={searchText}
+                onChangeText={setSearchText}
+                autoFocus
+                returnKeyType="search"
+              />
+            </View>
+          ) : (
+            <View style={styles.flex}>
+              <Text style={[styles.date, { color: colors.textPrimary }]}>{dateLabel}</Text>
+              <Text style={[styles.streak, { color: colors.textSecondary }]}>
+                {streak > 0 ? t('today.streak', { count: streak }) : t(getGreetingKey())}
+              </Text>
+            </View>
+          )}
+          <Pressable
+            onPress={() => (showSearch ? closeSearch() : setShowSearch(true))}
+            hitSlop={6}
+            style={({ pressed }) => [
+              styles.iconButton,
+              { backgroundColor: pressed ? colors.outline : colors.surfaceVariant },
+            ]}
+            accessibilityRole="button"
+            accessibilityLabel={showSearch ? t('common.cancel') : t('a11y.search')}
+          >
+            <Icon name={showSearch ? 'x' : 'search'} size={18} color={colors.textSecondary} />
+          </Pressable>
+        </View>
+
+        {nothingAtAll && !isSearching ? (
+          <View style={styles.flex}>
+            <SunArc done={0} total={0} />
+          </View>
+        ) : (
+          <TodoSectionList
+            sections={sections}
+            onPressTodo={setSelectedTodoId}
+            reorderSectionKey={isSearching ? undefined : 'active'}
+            onReorder={reorderTodos}
+            ListHeaderComponent={listHeader}
+          />
+        )}
+
+        {!showSearch && <QuickAddBar onAdd={handleAddTodo} />}
+      </KeyboardAvoidingView>
+
+      {selectedTodoId && (
+        <TodoDetailSheet todoId={selectedTodoId} onClose={() => setSelectedTodoId(null)} />
+      )}
+    </ScreenContainer>
+  );
+}
 
 function getGreetingKey(): string {
   const hour = new Date().getHours();
@@ -23,322 +206,46 @@ function getGreetingKey(): string {
   return 'today.greeting.evening';
 }
 
-export default function TodayScreen() {
-  const { colors } = useTheme();
-  const { t } = useTranslation();
-  const dateLocale = getDateLocale();
-  const today = format(new Date(), 'yyyy-MM-dd');
-  const dateLabel = format(new Date(), t('dateFormat.monthDayWeekday'), { locale: dateLocale });
-
-  // Store selectors
-  const todos = useTodoStore((s) => s.todos);
-  const categories = useTodoStore((s) => s.categories);
-  const streaks = useTodoStore((s) => s.streaks);
-  const addTodo = useTodoStore((s) => s.addTodo);
-  const toggleTodo = useTodoStore((s) => s.toggleTodo);
-  const toggleSubtask = useTodoStore((s) => s.toggleSubtask);
-  const addSubtask = useTodoStore((s) => s.addSubtask);
-  const deleteSubtask = useTodoStore((s) => s.deleteSubtask);
-  const updateSubtask = useTodoStore((s) => s.updateSubtask);
-  const updateTodo = useTodoStore((s) => s.updateTodo);
-  const deleteTodo = useTodoStore((s) => s.deleteTodo);
-  const moveTodoUp = useTodoStore((s) => s.moveTodoUp);
-  const moveTodoDown = useTodoStore((s) => s.moveTodoDown);
-
-  // Derived values
-  const todayTodos = useMemo(() => {
-    return todos
-      .filter((t) => t.due_date === today && !t.is_deleted)
-      .sort((a, b) => {
-        if (a.is_completed !== b.is_completed) return a.is_completed ? 1 : -1;
-        return a.sort_order - b.sort_order;
-      });
-  }, [todos, today]);
-
-  const currentStreak = useMemo(() => {
-    let count = 0;
-    let date = new Date();
-    const todayData = streaks[format(date, 'yyyy-MM-dd')];
-    if (!todayData || todayData.todos_completed === 0) {
-      date = new Date(date.getTime() - 86400000);
-    }
-    while (true) {
-      const dateStr = format(date, 'yyyy-MM-dd');
-      const data = streaks[dateStr];
-      if (data && data.todos_completed > 0) {
-        count++;
-        date = new Date(date.getTime() - 86400000);
-      } else {
-        break;
-      }
-    }
-    return count;
-  }, [streaks]);
-
-  // UI state
-  const [selectedTodoId, setSelectedTodoId] = useState<string | null>(null);
-  const [showCompleted, setShowCompleted] = useState(false);
-  const [showSearch, setShowSearch] = useState(false);
-  const [searchText, setSearchText] = useState('');
-
-  // When searching, search ALL non-deleted todos; otherwise show today only
-  const isSearching = showSearch && searchText.trim().length > 0;
-
-  const filteredTodos = useMemo(() => {
-    if (!searchText.trim()) return todayTodos;
-    const q = searchText.trim().toLowerCase();
-    // Search all non-deleted todos
-    return todos
-      .filter(
-        (t) =>
-          !t.is_deleted &&
-          (t.title.toLowerCase().includes(q) ||
-            (t.memo && t.memo.toLowerCase().includes(q)))
-      )
-      .sort((a, b) => {
-        if (a.is_completed !== b.is_completed) return a.is_completed ? 1 : -1;
-        return a.sort_order - b.sort_order;
-      });
-  }, [todos, todayTodos, searchText]);
-
-  const activeTodos = useMemo(
-    () => filteredTodos.filter((t) => !t.is_completed),
-    [filteredTodos]
-  );
-  const completedTodos = useMemo(
-    () => filteredTodos.filter((t) => t.is_completed),
-    [filteredTodos]
-  );
-
-  const handleAddTodo = useCallback(
-    (title: string) => {
-      addTodo({ title, due_date: today });
-    },
-    [today]
-  );
-
-  const handleToggle = useCallback(
-    (id: string) => {
-      toggleTodo(id);
-    },
-    []
-  );
-
-  const handleUpdateMemo = useCallback(
-    (id: string, memo: string) => {
-      updateTodo(id, { memo });
-    },
-    []
-  );
-
-  const isEmpty = todayTodos.length === 0;
-
-  return (
-    <ScreenContainer>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={90}
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <View style={styles.headerTop}>
-            <Text style={[styles.brandLabel, { color: colors.textSecondary }]}>
-              SimpleTodo
-            </Text>
-            <View style={styles.headerActions}>
-              <Pressable
-                onPress={() => {
-                  setShowSearch(!showSearch);
-                  if (showSearch) setSearchText('');
-                }}
-                hitSlop={8}
-              >
-                <MaterialIcons
-                  name={showSearch ? 'close' : 'search'}
-                  size={22}
-                  color={colors.textSecondary}
-                />
-              </Pressable>
-              <StreakBadge count={currentStreak} />
-            </View>
-          </View>
-          {showSearch ? (
-            <View style={[styles.searchBar, { backgroundColor: colors.surfaceVariant }]}>
-              <MaterialIcons name="search" size={18} color={colors.textDisabled} />
-              <TextInput
-                style={[styles.searchInput, { color: colors.textPrimary }]}
-                placeholder={t('today.searchPlaceholder')}
-                placeholderTextColor={colors.textDisabled}
-                value={searchText}
-                onChangeText={setSearchText}
-                autoFocus
-              />
-              {searchText.length > 0 && (
-                <Pressable onPress={() => setSearchText('')} hitSlop={8}>
-                  <MaterialIcons name="close" size={16} color={colors.textDisabled} />
-                </Pressable>
-              )}
-            </View>
-          ) : (
-            <>
-              <Text style={[styles.dateLabel, { color: colors.textPrimary }]}>
-                {dateLabel}
-              </Text>
-              <Text style={[styles.greeting, { color: colors.textSecondary }]}>
-                {t(getGreetingKey())}
-              </Text>
-            </>
-          )}
-        </View>
-
-        {isEmpty ? (
-          <View style={styles.emptyWrapper}>
-            <EmptyState
-              icon="check-circle-outline"
-              title={t('today.emptyTitle')}
-              description={t('today.emptyDesc')}
-            />
-          </View>
-        ) : (
-          <FlatList
-            data={isSearching ? filteredTodos : activeTodos}
-            keyExtractor={(item) => item.id}
-            contentContainerStyle={styles.listContent}
-            ListHeaderComponent={
-              isSearching ? (
-                <SectionHeader
-                  title={`${t('today.searchResults')} ${t('today.searchCount', { count: filteredTodos.length })}`}
-                  count={filteredTodos.length}
-                />
-              ) : activeTodos.length > 0 ? (
-                <SectionHeader title={t('today.sectionActive')} count={activeTodos.length} />
-              ) : null
-            }
-            renderItem={({ item }) => (
-              <TodoItem
-                todo={item}
-                onToggle={handleToggle}
-                onToggleSubtask={toggleSubtask}
-                onAddSubtask={addSubtask}
-                onDeleteSubtask={deleteSubtask}
-                onUpdateSubtask={updateSubtask}
-                onDelete={deleteTodo}
-                onMoveUp={moveTodoUp}
-                onMoveDown={moveTodoDown}
-                onUpdateMemo={handleUpdateMemo}
-                onPress={setSelectedTodoId}
-                showDate={isSearching}
-                categories={categories}
-              />
-            )}
-            ListFooterComponent={
-              !isSearching && completedTodos.length > 0 ? (
-                <>
-                  <SectionHeader
-                    title={t('today.sectionCompleted')}
-                    count={completedTodos.length}
-                    collapsible
-                    collapsed={!showCompleted}
-                    onToggle={() => setShowCompleted(!showCompleted)}
-                  />
-                  {showCompleted &&
-                    completedTodos.map((todo) => (
-                      <TodoItem
-                        key={todo.id}
-                        todo={todo}
-                        onToggle={handleToggle}
-                        onToggleSubtask={toggleSubtask}
-                        onUpdateSubtask={updateSubtask}
-                        onDelete={deleteTodo}
-                        onUpdateMemo={handleUpdateMemo}
-                        onPress={setSelectedTodoId}
-                        categories={categories}
-                      />
-                    ))}
-                </>
-              ) : null
-            }
-          />
-        )}
-
-        {/* Quick Add Bar */}
-        <QuickAddBar onAdd={handleAddTodo} />
-
-        {/* Bottom Sheet */}
-        {selectedTodoId && (
-          <TodoDetailSheet
-            todoId={selectedTodoId}
-            onClose={() => setSelectedTodoId(null)}
-          />
-        )}
-
-      </KeyboardAvoidingView>
-    </ScreenContainer>
-  );
-}
-
 const styles = StyleSheet.create({
   flex: {
     flex: 1,
   },
-  header: {
-    paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.md,
-    paddingBottom: Spacing.sm,
-  },
-  headerTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: Spacing.xs,
-  },
-  brandLabel: {
-    fontSize: 13,
-    fontWeight: '600' as const,
-    letterSpacing: 0.5,
-    textTransform: 'uppercase',
-  },
-  dateLabel: {
-    fontSize: 26,
-    lineHeight: 34,
-    fontWeight: '700' as const,
-    letterSpacing: -0.3,
-  },
-  greeting: {
-    fontSize: 15,
-    lineHeight: 22,
-    fontWeight: '400' as const,
-    marginTop: 2,
-  },
-  emptyWrapper: {
-    flex: 1,
-    justifyContent: 'center',
-  },
-  headerActions: {
+  topBar: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    paddingTop: Spacing.xs,
+    paddingBottom: Spacing.xxs,
+    minHeight: 52,
+  },
+  date: {
+    ...Typography.bodyMedium,
+    fontWeight: '600',
+  },
+  streak: {
+    ...Typography.caption,
+    marginTop: 2,
+  },
+  iconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   searchBar: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.xs,
     paddingHorizontal: Spacing.sm,
-    paddingVertical: Spacing.xs,
-    borderRadius: 10,
-    marginTop: Spacing.xs,
+    borderRadius: Radius.control,
+    height: 44,
   },
   searchInput: {
     flex: 1,
-    fontSize: 15,
-    lineHeight: 22,
-    fontWeight: '400' as const,
-    padding: 0,
-    paddingVertical: Spacing.xs,
-  },
-  listContent: {
-    paddingTop: Spacing.xs,
-    paddingBottom: Spacing.md,
+    fontSize: 16,
+    paddingVertical: 0,
   },
 });

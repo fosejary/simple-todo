@@ -1,25 +1,38 @@
-import React, { useState, useCallback, useMemo } from 'react';
-import {
-  View,
-  Text,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-} from 'react-native';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import { View, Pressable, ScrollView, StyleSheet, KeyboardAvoidingView, Platform, BackHandler } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
+import { Text } from '@/components/atoms/AppText';
+import { Icon } from '@/components/atoms/Icon';
 import { ScreenContainer } from '@/components/layout/ScreenContainer';
-import { TodoItem } from '@/components/molecules/TodoItem';
 import { EmptyState } from '@/components/molecules/EmptyState';
 import { QuickAddBar } from '@/components/molecules/QuickAddBar';
 import { TodoDetailSheet } from '@/components/organisms/TodoDetailSheet';
+import { TodoSectionList } from '@/components/organisms/TodoSectionList';
 import { CategoryEditor } from '@/components/organisms/CategoryEditor';
 import { useTheme } from '@/hooks/useTheme';
 import { useTodoStore } from '@/stores/todoStore';
 import { Category, Todo } from '@/lib/types';
-import { Spacing, BorderRadius, Elevation } from '@/constants/theme';
+import { Spacing, Radius, Typography } from '@/constants/theme';
+
+const UNCATEGORIZED = '__uncategorized__';
+
+interface Group {
+  active: Todo[];
+  completed: Todo[];
+}
+
+/** Active todos: dated first (soonest first), then undated, then manual order. */
+const byDueThenOrder = (a: Todo, b: Todo) => {
+  if (a.due_date !== b.due_date) {
+    if (!a.due_date) return 1;
+    if (!b.due_date) return -1;
+    return a.due_date.localeCompare(b.due_date);
+  }
+  return a.sort_order - b.sort_order;
+};
+
+type MaterialName = keyof typeof MaterialIcons.glyphMap;
 
 export default function CategoryScreen() {
   const { colors } = useTheme();
@@ -28,50 +41,60 @@ export default function CategoryScreen() {
   const todos = useTodoStore((s) => s.todos);
   const categories = useTodoStore((s) => s.categories);
   const addTodo = useTodoStore((s) => s.addTodo);
-  const toggleTodo = useTodoStore((s) => s.toggleTodo);
-  const toggleSubtask = useTodoStore((s) => s.toggleSubtask);
-  const addSubtask = useTodoStore((s) => s.addSubtask);
-  const deleteSubtaskAction = useTodoStore((s) => s.deleteSubtask);
-  const updateSubtaskAction = useTodoStore((s) => s.updateSubtask);
-  const updateTodo = useTodoStore((s) => s.updateTodo);
-  const deleteTodo = useTodoStore((s) => s.deleteTodo);
 
   const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
   const [selectedTodoId, setSelectedTodoId] = useState<string | null>(null);
   const [editingCategory, setEditingCategory] = useState<Category | null>(null);
   const [showCategoryEditor, setShowCategoryEditor] = useState(false);
+  const [showCompleted, setShowCompleted] = useState(false);
 
-  // Group todos by category
-  const activeTodos = useMemo(
-    () => todos.filter((t) => !t.is_deleted && !t.is_completed),
-    [todos]
-  );
+  // Category detail is local state, not a route — make the Android back button leave it.
+  useEffect(() => {
+    if (!selectedCategoryId) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      setSelectedCategoryId(null);
+      return true;
+    });
+    return () => sub.remove();
+  }, [selectedCategoryId]);
 
-  const completedTodos = useMemo(
-    () => todos.filter((t) => !t.is_deleted && t.is_completed),
-    [todos]
-  );
+  useEffect(() => {
+    setShowCompleted(false);
+  }, [selectedCategoryId]);
 
-  const uncategorized = useMemo(
-    () => activeTodos.filter((t) => !t.category_id).sort((a, b) => a.sort_order - b.sort_order),
-    [activeTodos]
-  );
+  const groups = useMemo(() => {
+    const known = new Set(categories.map((c) => c.id));
+    const map = new Map<string, Group>();
+    for (const todo of todos) {
+      if (todo.is_deleted) continue;
+      const key = todo.category_id && known.has(todo.category_id) ? todo.category_id : UNCATEGORIZED;
+      let g = map.get(key);
+      if (!g) {
+        g = { active: [], completed: [] };
+        map.set(key, g);
+      }
+      (todo.is_completed ? g.completed : g.active).push(todo);
+    }
+    for (const g of map.values()) {
+      g.active.sort(byDueThenOrder);
+      g.completed.sort((a, b) => (b.completed_at ?? '').localeCompare(a.completed_at ?? ''));
+    }
+    return map;
+  }, [todos, categories]);
 
-  const categoryGroups = useMemo(() => {
-    return categories.map((cat) => ({
-      category: cat,
-      todos: activeTodos
-        .filter((t) => t.category_id === cat.id)
-        .sort((a, b) => a.sort_order - b.sort_order),
-      completedCount: completedTodos.filter((t) => t.category_id === cat.id).length,
-    }));
-  }, [categories, activeTodos, completedTodos]);
+  const emptyGroup: Group = { active: [], completed: [] };
+  const groupFor = (id: string) => groups.get(id) ?? emptyGroup;
+  const uncategorized = groupFor(UNCATEGORIZED);
 
-  // Selected category view
-  const selectedGroup = useMemo(() => {
-    if (!selectedCategoryId) return null;
-    return categoryGroups.find((g) => g.category.id === selectedCategoryId) || null;
-  }, [selectedCategoryId, categoryGroups]);
+  const totals = useMemo(() => {
+    let active = 0;
+    let completed = 0;
+    for (const g of groups.values()) {
+      active += g.active.length;
+      completed += g.completed.length;
+    }
+    return { active, completed };
+  }, [groups]);
 
   const openCreateCategory = () => {
     setEditingCategory(null);
@@ -83,316 +106,171 @@ export default function CategoryScreen() {
     setShowCategoryEditor(true);
   };
 
+  const selectedCategory =
+    selectedCategoryId && selectedCategoryId !== UNCATEGORIZED
+      ? categories.find((c) => c.id === selectedCategoryId) ?? null
+      : null;
+
   const handleAddTodo = useCallback(
     (title: string) => {
-      addTodo({
-        title,
-        category_id: selectedCategoryId,
-      });
+      addTodo({ title, category_id: selectedCategoryId === UNCATEGORIZED ? null : selectedCategoryId });
     },
     [selectedCategoryId]
   );
 
-  const totalActive = activeTodos.length;
-  const totalCompleted = completedTodos.length;
+  const editor = (
+    <CategoryEditor
+      category={editingCategory}
+      visible={showCategoryEditor}
+      onClose={() => setShowCategoryEditor(false)}
+      onDeleted={() => setSelectedCategoryId(null)}
+    />
+  );
 
-  // Detail view for uncategorized
-  if (selectedCategoryId === '__uncategorized__') {
+  const sheet = selectedTodoId ? (
+    <TodoDetailSheet todoId={selectedTodoId} onClose={() => setSelectedTodoId(null)} />
+  ) : null;
+
+  // ---- Detail view (one category, or uncategorized) ----
+  if (selectedCategoryId && (selectedCategory || selectedCategoryId === UNCATEGORIZED)) {
+    const group = groupFor(selectedCategoryId);
+    const name = selectedCategory?.name ?? t('category.uncategorized');
+    const accent = selectedCategory?.color ?? colors.textTertiary;
+    const icon = (selectedCategory?.icon || 'inbox') as MaterialName;
+    const isEmpty = group.active.length === 0 && group.completed.length === 0;
+
     return (
       <ScreenContainer>
-        <KeyboardAvoidingView
-          style={styles.flex}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={90}
-        >
+        <KeyboardAvoidingView style={styles.flex} behavior="padding" keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}>
           <View style={styles.detailHeader}>
             <Pressable
               onPress={() => setSelectedCategoryId(null)}
-              style={[styles.backButton, { backgroundColor: colors.surfaceVariant }]}
+              hitSlop={6}
+              style={({ pressed }) => [styles.iconButton, pressed && { backgroundColor: colors.surfaceVariant }]}
+              accessibilityRole="button"
+              accessibilityLabel={t('a11y.back')}
             >
-              <MaterialIcons name="arrow-back" size={20} color={colors.textPrimary} />
+              <Icon name="arrow-left" size={22} color={colors.textPrimary} />
             </Pressable>
-            <View style={styles.detailHeaderText}>
-              <Text style={[styles.detailTitle, { color: colors.textPrimary }]}>
-                {t('category.uncategorized')}
+            <MaterialIcons name={icon} size={22} color={accent} />
+            <View style={styles.flex}>
+              <Text style={[styles.detailTitle, { color: colors.textPrimary }]} numberOfLines={1}>
+                {name}
               </Text>
               <Text style={[styles.detailSubtitle, { color: colors.textSecondary }]}>
-                {t('category.uncategorizedInProgress', { count: uncategorized.length })}
+                {t('category.detailSummary', { active: group.active.length, completed: group.completed.length })}
               </Text>
             </View>
-          </View>
-
-          <ScrollView
-            contentContainerStyle={styles.detailList}
-            showsVerticalScrollIndicator={false}
-          >
-            {uncategorized.length === 0 ? (
-              <EmptyState
-                icon="inbox"
-                title={t('category.uncategorizedEmpty')}
-                description=""
-              />
-            ) : (
-              uncategorized.map((todo) => (
-                <TodoItem
-                  key={todo.id}
-                  todo={todo}
-                  onToggle={toggleTodo}
-                  onToggleSubtask={toggleSubtask}
-                  onAddSubtask={addSubtask}
-                  onDeleteSubtask={deleteSubtaskAction}
-                  onUpdateSubtask={updateSubtaskAction}
-                  onDelete={deleteTodo}
-                  onUpdateMemo={(id, memo) => updateTodo(id, { memo })}
-                  onPress={setSelectedTodoId}
-                  categories={categories}
-                />
-              ))
-            )}
-          </ScrollView>
-
-          <QuickAddBar onAdd={(title) => addTodo({ title, category_id: null })} placeholder={t('category.uncategorizedAddPlaceholder')} />
-
-          {selectedTodoId && (
-            <TodoDetailSheet
-              todoId={selectedTodoId}
-              onClose={() => setSelectedTodoId(null)}
-            />
-          )}
-        </KeyboardAvoidingView>
-      </ScreenContainer>
-    );
-  }
-
-  // Detail view for selected category
-  if (selectedGroup) {
-    return (
-      <ScreenContainer>
-        <KeyboardAvoidingView
-          style={styles.flex}
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={90}
-        >
-          {/* Header with back */}
-          <View style={styles.detailHeader}>
-            <Pressable
-              onPress={() => setSelectedCategoryId(null)}
-              style={[styles.backButton, { backgroundColor: colors.surfaceVariant }]}
-            >
-              <MaterialIcons name="arrow-back" size={20} color={colors.textPrimary} />
-            </Pressable>
-            <View style={styles.detailHeaderText}>
-              <View style={styles.detailTitleRow}>
-                <View style={[styles.catDotLarge, { backgroundColor: selectedGroup.category.color }]} />
-                <Text style={[styles.detailTitle, { color: colors.textPrimary }]}>
-                  {selectedGroup.category.name}
-                </Text>
-              </View>
-              <Text style={[styles.detailSubtitle, { color: colors.textSecondary }]}>
-                {t('category.detailSummary', { active: selectedGroup.todos.length, completed: selectedGroup.completedCount })}
-              </Text>
-            </View>
-          </View>
-
-          {/* Todo list */}
-          <ScrollView
-            contentContainerStyle={styles.detailList}
-            showsVerticalScrollIndicator={false}
-          >
-            {selectedGroup.todos.length === 0 ? (
-              <EmptyState
-                icon="folder-open"
-                title={t('category.noTodosTitle')}
-                description={t('category.noTodosDesc')}
-              />
-            ) : (
-              selectedGroup.todos.map((todo) => (
-                <TodoItem
-                  key={todo.id}
-                  todo={todo}
-                  onToggle={toggleTodo}
-                  onToggleSubtask={toggleSubtask}
-                  onAddSubtask={addSubtask}
-                  onDeleteSubtask={deleteSubtaskAction}
-                  onUpdateSubtask={updateSubtaskAction}
-                  onDelete={deleteTodo}
-                  onUpdateMemo={(id, memo) => updateTodo(id, { memo })}
-                  onPress={setSelectedTodoId}
-                  categories={categories}
-                />
-              ))
-            )}
-          </ScrollView>
-
-          <QuickAddBar onAdd={handleAddTodo} placeholder={t('category.addTodoPlaceholder', { name: selectedGroup.category.name })} />
-
-          {selectedTodoId && (
-            <TodoDetailSheet
-              todoId={selectedTodoId}
-              onClose={() => setSelectedTodoId(null)}
-            />
-          )}
-        </KeyboardAvoidingView>
-      </ScreenContainer>
-    );
-  }
-
-  // Main category grid view
-  return (
-    <ScreenContainer>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={90}
-      >
-        {/* Header */}
-        <View style={styles.header}>
-          <Text style={[styles.title, { color: colors.textPrimary }]}>
-            {t('category.title')}
-          </Text>
-          <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
-            {t('category.summary', { active: totalActive, completed: totalCompleted })}
-          </Text>
-        </View>
-
-        <ScrollView
-          contentContainerStyle={styles.gridContent}
-          showsVerticalScrollIndicator={false}
-        >
-          {/* Category cards */}
-          <View style={styles.grid}>
-            {categoryGroups.map((group) => {
-              const total = group.todos.length + group.completedCount;
-              const pct = total > 0 ? Math.round((group.completedCount / total) * 100) : 0;
-              return (
-                <Pressable
-                  key={group.category.id}
-                  onPress={() => setSelectedCategoryId(group.category.id)}
-                  style={[
-                    styles.categoryCard,
-                    { backgroundColor: colors.surface },
-                    Elevation.level1,
-                  ]}
-                >
-                  {/* Color accent top */}
-                  <View style={[styles.catAccent, { backgroundColor: group.category.color }]} />
-
-                  {/* Edit button */}
-                  <Pressable
-                    onPress={(e) => {
-                      e.stopPropagation?.();
-                      openEditCategory(group.category);
-                    }}
-                    hitSlop={6}
-                    style={styles.catEditBtn}
-                  >
-                    <MaterialIcons name="more-horiz" size={16} color={colors.textDisabled} />
-                  </Pressable>
-
-                  {/* Category icon */}
-                  <View style={[styles.catIcon, { backgroundColor: `${group.category.color}18` }]}>
-                    <MaterialIcons
-                      name={(group.category.icon || 'assignment') as any}
-                      size={22}
-                      color={group.category.color}
-                    />
-                  </View>
-
-                  {/* Name */}
-                  <Text style={[styles.catCardName, { color: colors.textPrimary }]} numberOfLines={1}>
-                    {group.category.name}
-                  </Text>
-
-                  {/* Stats row */}
-                  <View style={styles.catStatsRow}>
-                    <Text style={[styles.catCardCount, { color: colors.textSecondary }]}>
-                      {t('category.activeCount', { count: group.todos.length })}
-                    </Text>
-                    {group.completedCount > 0 && (
-                      <Text style={[styles.catCardCount, { color: colors.success }]}>
-                        {t('category.completedCount', { count: group.completedCount })}
-                      </Text>
-                    )}
-                  </View>
-
-                  {/* Progress bar */}
-                  {total > 0 && (
-                    <View style={styles.progressWrap}>
-                      <View style={[styles.progressBar, { backgroundColor: colors.surfaceVariant }]}>
-                        <View
-                          style={[
-                            styles.progressFill,
-                            { backgroundColor: group.category.color, width: `${pct}%` },
-                          ]}
-                        />
-                      </View>
-                      <Text style={[styles.progressPct, { color: colors.textDisabled }]}>
-                        {pct}%
-                      </Text>
-                    </View>
-                  )}
-                </Pressable>
-              );
-            })}
-
-            {/* Uncategorized card */}
-            {uncategorized.length > 0 && (
+            {selectedCategory && (
               <Pressable
-                onPress={() => setSelectedCategoryId('__uncategorized__')}
-                style={[
-                  styles.categoryCard,
-                  { backgroundColor: colors.surface },
-                  Elevation.level1,
-                ]}
+                onPress={() => openEditCategory(selectedCategory)}
+                hitSlop={6}
+                style={({ pressed }) => [styles.iconButton, pressed && { backgroundColor: colors.surfaceVariant }]}
+                accessibilityRole="button"
+                accessibilityLabel={t('categoryEditor.edit')}
               >
-                <View style={[styles.catAccent, { backgroundColor: colors.textDisabled }]} />
-                <View style={[styles.catIcon, { backgroundColor: colors.surfaceVariant }]}>
-                  <MaterialIcons name="inbox" size={22} color={colors.textDisabled} />
-                </View>
-                <Text style={[styles.catCardName, { color: colors.textSecondary }]} numberOfLines={1}>
-                  {t('category.uncategorized')}
-                </Text>
-                <View style={styles.catStatsRow}>
-                  <Text style={[styles.catCardCount, { color: colors.textDisabled }]}>
-                    {t('category.activeCount', { count: uncategorized.length })}
-                  </Text>
-                </View>
+                <Icon name="edit-2" size={18} color={colors.textSecondary} />
               </Pressable>
             )}
-
-            {/* Add category card */}
-            <Pressable
-              onPress={openCreateCategory}
-              style={[
-                styles.addCategoryCard,
-                { borderColor: colors.outline },
-              ]}
-            >
-              <MaterialIcons name="add" size={24} color={colors.textDisabled} />
-              <Text style={[styles.addCategoryLabel, { color: colors.textDisabled }]}>
-                {t('category.addCategory')}
-              </Text>
-            </Pressable>
           </View>
 
-          {/* Category Editor Bottom Sheet */}
-          <CategoryEditor
-            category={editingCategory}
-            visible={showCategoryEditor}
-            onClose={() => setShowCategoryEditor(false)}
-            onDeleted={() => setSelectedCategoryId(null)}
-          />
-
-          {/* Empty state */}
-          {categories.length === 0 && uncategorized.length === 0 && (
-            <EmptyState
-              icon="category"
-              title={t('category.emptyTitle')}
-              description={t('category.emptyDesc')}
+          {isEmpty ? (
+            <View style={styles.flex}>
+              <EmptyState
+                icon={selectedCategory ? 'folder' : 'inbox'}
+                title={selectedCategory ? t('category.noTodosTitle') : t('category.uncategorizedEmpty')}
+                description={selectedCategory ? t('category.noTodosDesc') : undefined}
+              />
+            </View>
+          ) : (
+            <TodoSectionList
+              hideCategory
+              onPressTodo={setSelectedTodoId}
+              sections={[
+                { key: 'active', title: t('category.sectionActive'), data: group.active, showDate: true },
+                {
+                  key: 'completed',
+                  title: t('today.sectionCompleted'),
+                  data: group.completed,
+                  showDate: true,
+                  collapsible: true,
+                  collapsed: !showCompleted,
+                  onToggle: () => setShowCompleted((v) => !v),
+                },
+              ]}
             />
           )}
-        </ScrollView>
-      </KeyboardAvoidingView>
+
+          <QuickAddBar
+            onAdd={handleAddTodo}
+            placeholder={selectedCategory ? t('category.addTodoPlaceholder', { name }) : t('category.uncategorizedAddPlaceholder')}
+          />
+        </KeyboardAvoidingView>
+        {editor}
+        {sheet}
+      </ScreenContainer>
+    );
+  }
+
+  // ---- List view ----
+  const rows: { key: string; cat: Category | null }[] = [
+    ...categories.map((cat) => ({ key: cat.id, cat })),
+    ...(uncategorized.active.length > 0 ? [{ key: UNCATEGORIZED, cat: null }] : []),
+  ];
+
+  return (
+    <ScreenContainer>
+      <View style={styles.header}>
+        <Text style={[styles.title, { color: colors.textPrimary }]}>{t('category.title')}</Text>
+        <Text style={[styles.subtitle, { color: colors.textSecondary }]}>
+          {t('category.summary', { active: totals.active, completed: totals.completed })}
+        </Text>
+      </View>
+
+      <ScrollView contentContainerStyle={styles.listContent} showsVerticalScrollIndicator={false}>
+        {categories.length === 0 && (
+          <EmptyState icon="folder-plus" title={t('category.emptyTitle')} description={t('category.emptyDesc')} compact />
+        )}
+        <View style={[styles.panel, { backgroundColor: colors.surface, borderColor: colors.hairline }]}>
+          {rows.map(({ key, cat }, i) => {
+            const g = groupFor(cat?.id ?? UNCATEGORIZED);
+            return (
+              <Pressable
+                key={key}
+                onPress={() => setSelectedCategoryId(cat?.id ?? UNCATEGORIZED)}
+                onLongPress={cat ? () => openEditCategory(cat) : undefined}
+                style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.divider }]}
+                accessibilityRole="button"
+                accessibilityHint={cat ? t('a11y.longPressToEdit') : undefined}
+              >
+                {i > 0 && <View style={[styles.separator, { backgroundColor: colors.divider }]} />}
+                <MaterialIcons
+                  name={(cat?.icon || 'inbox') as MaterialName}
+                  size={22}
+                  color={cat?.color ?? colors.textTertiary}
+                />
+                <Text style={[styles.rowLabel, { color: cat ? colors.textPrimary : colors.textSecondary }]} numberOfLines={1}>
+                  {cat?.name ?? t('category.uncategorized')}
+                </Text>
+                <Text style={[styles.rowCount, { color: colors.textTertiary }]}>{g.active.length}</Text>
+                <Icon name="chevron-right" size={18} color={colors.textTertiary} />
+              </Pressable>
+            );
+          })}
+          <Pressable
+            onPress={openCreateCategory}
+            style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.divider }]}
+            accessibilityRole="button"
+          >
+            {rows.length > 0 && <View style={[styles.separator, { backgroundColor: colors.divider }]} />}
+            <View style={styles.addIcon}>
+              <Icon name="plus" size={20} color={colors.textSecondary} />
+            </View>
+            <Text style={[styles.rowLabel, { color: colors.textSecondary }]}>{t('category.addCategory')}</Text>
+          </Pressable>
+        </View>
+      </ScrollView>
+      {editor}
     </ScreenContainer>
   );
 }
@@ -401,158 +279,75 @@ const styles = StyleSheet.create({
   flex: { flex: 1 },
   header: {
     paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.md,
-    paddingBottom: Spacing.sm,
-  },
-  title: {
-    fontSize: 26,
-    lineHeight: 34,
-    fontWeight: '700' as const,
-    letterSpacing: -0.3,
-  },
-  subtitle: {
-    fontSize: 13,
-    marginTop: 2,
-  },
-  gridContent: {
-    paddingHorizontal: Spacing.md,
-    paddingBottom: Spacing.xxl,
-  },
-  grid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
-  categoryCard: {
-    width: '47%',
-    borderRadius: 16,
-    overflow: 'hidden',
+    paddingTop: Spacing.sm,
     paddingBottom: Spacing.md,
   },
-  catAccent: {
-    height: 4,
-    borderTopLeftRadius: 16,
-    borderTopRightRadius: 16,
+  title: {
+    ...Typography.title,
   },
-  catEditBtn: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-    backgroundColor: 'rgba(0,0,0,0.05)',
-    alignItems: 'center',
-    justifyContent: 'center',
-    zIndex: 2,
+  subtitle: {
+    ...Typography.caption,
+    marginTop: 2,
   },
-  catIcon: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: Spacing.md,
-    marginLeft: Spacing.md,
-  },
-  catCardName: {
-    fontSize: 15,
-    fontWeight: '600' as const,
-    marginTop: Spacing.sm,
+  listContent: {
     paddingHorizontal: Spacing.md,
+    paddingBottom: Spacing.xxxl,
   },
-  catStatsRow: {
-    flexDirection: 'row',
-    gap: Spacing.xs,
-    paddingHorizontal: Spacing.md,
-    marginTop: 4,
-  },
-  catCardCount: {
-    fontSize: 11,
-    fontWeight: '500' as const,
-  },
-  progressWrap: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: Spacing.md,
-    marginTop: Spacing.xs,
-  },
-  progressBar: {
-    flex: 1,
-    height: 4,
-    borderRadius: 2,
+  panel: {
+    borderRadius: Radius.panel,
+    borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
   },
-  progressFill: {
-    height: '100%',
-    borderRadius: 2,
-  },
-  progressPct: {
-    fontSize: 10,
-    fontWeight: '600' as const,
-  },
-  addCategoryCard: {
-    width: '47%',
-    borderRadius: 16,
-    borderWidth: 1.5,
-    borderStyle: 'dashed',
-    paddingVertical: Spacing.xl,
+  row: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 8,
+    gap: Spacing.sm,
+    minHeight: 56,
+    paddingLeft: Spacing.md,
+    paddingRight: Spacing.sm,
   },
-  addCategoryLabel: {
-    fontSize: 13,
-    fontWeight: '500' as const,
+  separator: {
+    position: 'absolute',
+    top: 0,
+    left: 50,
+    right: 0,
+    height: StyleSheet.hairlineWidth,
   },
-  // Detail view
+  addIcon: {
+    width: 22,
+    alignItems: 'center',
+  },
+  rowLabel: {
+    ...Typography.body,
+    flex: 1,
+  },
+  rowCount: {
+    fontSize: 14,
+    fontVariant: ['tabular-nums'],
+  },
   detailHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.sm,
-    paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.md,
-    paddingBottom: Spacing.sm,
+    paddingLeft: Spacing.xs,
+    paddingRight: Spacing.md,
+    paddingTop: Spacing.xs,
+    paddingBottom: Spacing.xs,
   },
-  backButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
+  iconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  detailHeaderText: {
-    flex: 1,
-  },
-  detailTitleRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.xs,
-  },
-  catDotLarge: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
   },
   detailTitle: {
-    fontSize: 22,
-    fontWeight: '700' as const,
-    letterSpacing: -0.3,
+    fontSize: 20,
+    lineHeight: 26,
+    fontWeight: '600',
   },
   detailSubtitle: {
-    fontSize: 13,
-    marginTop: 2,
-  },
-  detailList: {
-    paddingBottom: Spacing.xxl,
-    paddingTop: Spacing.xs,
-  },
-  deleteButton: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
+    ...Typography.caption,
+    marginTop: 1,
   },
 });

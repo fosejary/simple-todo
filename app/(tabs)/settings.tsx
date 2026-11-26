@@ -1,45 +1,51 @@
-import React from 'react';
-import {
-  View,
-  Text,
-  ScrollView,
-  Pressable,
-  Alert,
-  StyleSheet,
-  Platform,
-} from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import React, { useCallback, useState } from 'react';
+import { View, ScrollView, Pressable, Alert, StyleSheet, Platform, Linking, AppState } from 'react-native';
+import { useFocusEffect } from 'expo-router';
+import Constants from 'expo-constants';
 import { useTranslation } from 'react-i18next';
+import { format, parseISO } from 'date-fns';
+import { Text } from '@/components/atoms/AppText';
+import { Icon, type IconName } from '@/components/atoms/Icon';
 import { ScreenContainer } from '@/components/layout/ScreenContainer';
+import { TextImportModal } from '@/components/organisms/TextImportModal';
 import { useTheme } from '@/hooks/useTheme';
 import { useSettingsStore } from '@/stores/settingsStore';
 import { useTodoStore } from '@/stores/todoStore';
-import { Spacing, BorderRadius, Elevation } from '@/constants/theme';
+import { showToast } from '@/stores/toastStore';
+import { exportBackup, pickBackup, restoreBackup, type BackupFile } from '@/lib/backup';
+import { ensureReminderPermission, getReminderPermission, type ReminderPermission } from '@/lib/reminders';
+import { showAdPrivacyOptions, useAdsConsent } from '@/lib/adsConsent';
+import { getDateLocale } from '@/i18n/dateLocale';
+import { Spacing, Radius, Typography, Elevation } from '@/constants/theme';
 
 type ThemeSetting = 'light' | 'dark' | 'system';
 
-function SettingsSection({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
+const PRIVACY_POLICY_URL = 'https://fosejary.github.io/privacy-policy.html';
+const ANDROID_PACKAGE = 'com.zeroninelab.simpletodo.app';
+
+/** Confirm dialog that also works on web (RN Alert buttons are native-only). */
+function confirm(title: string, message: string, okLabel: string, cancelLabel: string, onOk: () => void) {
+  if (Platform.OS === 'web') {
+    if (window.confirm(`${title}\n\n${message}`)) onOk();
+    return;
+  }
+  Alert.alert(title, message, [
+    { text: cancelLabel, style: 'cancel' },
+    { text: okLabel, style: 'destructive', onPress: onOk },
+  ]);
+}
+
+function notify(title: string, message: string) {
+  if (Platform.OS === 'web') window.alert(`${title}\n\n${message}`);
+  else Alert.alert(title, message);
+}
+
+function SettingsSection({ title, children }: { title: string; children: React.ReactNode }) {
   const { colors } = useTheme();
   return (
     <View style={styles.section}>
-      <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>
-        {title}
-      </Text>
-      <View
-        style={[
-          styles.sectionContent,
-          { backgroundColor: colors.surface },
-          Elevation.level1,
-        ]}
-      >
-        {children}
-      </View>
+      <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{title}</Text>
+      <View style={[styles.panel, { backgroundColor: colors.surface, borderColor: colors.hairline }]}>{children}</View>
     </View>
   );
 }
@@ -49,165 +55,230 @@ function SettingsRow({
   label,
   value,
   onPress,
-  rightElement,
   danger = false,
-  isLast = false,
+  external = false,
+  first = false,
+  children,
 }: {
-  icon: keyof typeof MaterialIcons.glyphMap;
+  icon: IconName;
   label: string;
   value?: string;
   onPress?: () => void;
-  rightElement?: React.ReactNode;
   danger?: boolean;
-  isLast?: boolean;
+  external?: boolean;
+  first?: boolean;
+  children?: React.ReactNode;
 }) {
   const { colors } = useTheme();
-
-  const content = (
-    <View
-      style={[
-        styles.row,
-        !isLast && { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.divider },
-      ]}
-    >
-      <View style={[styles.iconCircle, { backgroundColor: danger ? colors.errorContainer : colors.surfaceVariant }]}>
-        <MaterialIcons
-          name={icon}
-          size={18}
-          color={danger ? colors.error : colors.textSecondary}
-        />
+  const content = (pressed: boolean) => (
+    <View style={[styles.row, pressed && { backgroundColor: colors.divider }]}>
+      {!first && <View style={[styles.separator, { backgroundColor: colors.divider }]} />}
+      <View style={styles.rowMain}>
+        <Icon name={icon} size={18} color={danger ? colors.error : colors.textTertiary} />
+        <Text style={[styles.rowLabel, { color: danger ? colors.error : colors.textPrimary }]}>{label}</Text>
+        {!!value && <Text style={[styles.rowValue, { color: colors.textTertiary }]}>{value}</Text>}
+        {onPress && <Icon name={external ? 'external-link' : 'chevron-right'} size={external ? 16 : 18} color={colors.textTertiary} />}
       </View>
-      <Text
-        style={[
-          styles.rowLabel,
-          { color: danger ? colors.error : colors.textPrimary },
-        ]}
-      >
-        {label}
-      </Text>
-      <View style={styles.rowRight}>
-        {rightElement || (
-          <>
-            {value && (
-              <Text style={[styles.rowValue, { color: colors.textSecondary }]}>
-                {value}
-              </Text>
-            )}
-            {onPress && (
-              <MaterialIcons
-                name="chevron-right"
-                size={20}
-                color={colors.textDisabled}
-              />
-            )}
-          </>
-        )}
-      </View>
+      {children}
     </View>
   );
-
   if (onPress) {
-    return <Pressable onPress={onPress}>{content}</Pressable>;
+    return (
+      <Pressable onPress={onPress} accessibilityRole="button">
+        {({ pressed }) => content(pressed)}
+      </Pressable>
+    );
   }
+  return content(false);
+}
 
-  return content;
+function ThemeSegmented() {
+  const { colors } = useTheme();
+  const { t } = useTranslation();
+  const theme = useSettingsStore((s) => s.theme);
+  const updateSetting = useSettingsStore((s) => s.updateSetting);
+  const options: { value: ThemeSetting; label: string; icon: IconName }[] = [
+    { value: 'light', label: t('settings.themeLight'), icon: 'sun' },
+    { value: 'dark', label: t('settings.themeDark'), icon: 'moon' },
+    { value: 'system', label: t('settings.themeSystem'), icon: 'smartphone' },
+  ];
+  return (
+    <View style={[styles.segmented, { backgroundColor: colors.surfaceVariant }]} accessibilityRole="radiogroup">
+      {options.map((opt) => {
+        const selected = theme === opt.value;
+        return (
+          <Pressable
+            key={opt.value}
+            onPress={() => updateSetting('theme', opt.value)}
+            style={[styles.segment, selected && [{ backgroundColor: colors.surface }, Elevation.low]]}
+            accessibilityRole="radio"
+            accessibilityState={{ selected }}
+          >
+            <Icon name={opt.icon} size={14} color={selected ? colors.textPrimary : colors.textTertiary} />
+            <Text
+              style={[
+                styles.segmentText,
+                { color: selected ? colors.textPrimary : colors.textSecondary },
+                selected && styles.segmentTextActive,
+              ]}
+              numberOfLines={1}
+            >
+              {opt.label}
+            </Text>
+          </Pressable>
+        );
+      })}
+    </View>
+  );
 }
 
 export default function SettingsScreen() {
   const { colors } = useTheme();
   const { t } = useTranslation();
-
-  const theme = useSettingsStore((s) => s.theme);
-  const updateSetting = useSettingsStore((s) => s.updateSetting);
   const resetSettings = useSettingsStore((s) => s.resetSettings);
+  const appVersion = Constants.expoConfig?.version ?? '1.0.0';
+  const [permission, setPermission] = useState<ReminderPermission>('unsupported');
+  const [showImport, setShowImport] = useState(false);
+  const adPrivacyRequired = useAdsConsent((s) => s.privacyOptionsRequired);
 
-  const themeLabels: Record<ThemeSetting, string> = {
-    light: t('settings.themeLight'),
-    dark: t('settings.themeDark'),
-    system: t('settings.themeSystem'),
+  // Re-read permission whenever the tab is shown or the app returns from system settings.
+  useFocusEffect(
+    useCallback(() => {
+      const refresh = () => getReminderPermission().then(setPermission).catch(() => {});
+      refresh();
+      const sub = AppState.addEventListener('change', (s) => s === 'active' && refresh());
+      return () => sub.remove();
+    }, [])
+  );
+
+  const handleNotifications = async () => {
+    if (permission === 'granted') return;
+    if (permission === 'denied') {
+      Linking.openSettings();
+      return;
+    }
+    await ensureReminderPermission();
+    setPermission(await getReminderPermission());
   };
 
-  const showThemePicker = () => {
-    const themes: ThemeSetting[] = ['light', 'dark', 'system'];
-    const currentIdx = themes.indexOf(theme);
-    const next = themes[(currentIdx + 1) % themes.length];
-    updateSetting('theme', next);
+  const handleExport = async () => {
+    try {
+      await exportBackup(t('settings.exportDialogTitle'));
+    } catch {
+      notify(t('settings.exportFailed'), t('settings.exportFailedDetail'));
+    }
+  };
+
+  const handleRestore = async () => {
+    let picked: { backup: BackupFile; summary: { todos: number; categories: number; exportedAt: string } } | null;
+    try {
+      picked = await pickBackup();
+    } catch {
+      notify(t('settings.backupInvalid'), t('settings.backupInvalidDetail'));
+      return;
+    }
+    if (!picked) return;
+    const { backup, summary } = picked;
+    const date = summary.exportedAt
+      ? format(parseISO(summary.exportedAt), t('dateFormat.monthDay'), { locale: getDateLocale() })
+      : '—';
+    confirm(
+      t('settings.restoreConfirmTitle'),
+      t('settings.restoreConfirmDetail', { todos: summary.todos, categories: summary.categories, date }),
+      t('settings.restoreButton'),
+      t('common.cancel'),
+      () => {
+        restoreBackup(backup);
+        showToast({ message: t('toast.restored') });
+      }
+    );
   };
 
   const doReset = () => {
-    useTodoStore.setState({
-      todos: [],
-      categories: [],
-      streaks: {},
-    });
+    useTodoStore.setState({ todos: [], categories: [], streaks: {} });
     resetSettings();
   };
 
   const handleDataReset = () => {
     if (Platform.OS === 'web') {
-      if (window.confirm(t('settings.dataResetConfirm'))) {
-        doReset();
-      }
-    } else {
-      Alert.alert(
-        t('settings.dataResetTitle'),
-        t('settings.dataResetDetail'),
-        [
-          { text: t('common.cancel'), style: 'cancel' },
-          {
-            text: t('settings.dataResetButton'),
-            style: 'destructive',
-            onPress: () => {
-              Alert.alert(t('settings.dataResetFinalConfirm'), t('settings.dataResetFinalDetail'), [
-                { text: t('common.cancel'), style: 'cancel' },
-                { text: t('settings.dataResetButton'), style: 'destructive', onPress: doReset },
-              ]);
-            },
-          },
-        ]
-      );
+      if (window.confirm(t('settings.dataResetConfirm'))) doReset();
+      return;
     }
+    Alert.alert(t('settings.dataResetTitle'), t('settings.dataResetDetail'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      {
+        text: t('settings.dataResetButton'),
+        style: 'destructive',
+        onPress: () => {
+          Alert.alert(t('settings.dataResetFinalConfirm'), t('settings.dataResetFinalDetail'), [
+            { text: t('common.cancel'), style: 'cancel' },
+            { text: t('settings.dataResetButton'), style: 'destructive', onPress: doReset },
+          ]);
+        },
+      },
+    ]);
   };
+
+  const openStore = () => {
+    Linking.openURL(`market://details?id=${ANDROID_PACKAGE}`).catch(() =>
+      Linking.openURL(`https://play.google.com/store/apps/details?id=${ANDROID_PACKAGE}`)
+    );
+  };
+
+  const notificationValue =
+    permission === 'granted'
+      ? t('settings.notificationsOn')
+      : permission === 'denied'
+        ? t('settings.notificationsBlocked')
+        : t('settings.notificationsOff');
 
   return (
     <ScreenContainer>
       <View style={styles.header}>
-        <Text style={[styles.title, { color: colors.textPrimary }]}>
-          {t('settings.title')}
-        </Text>
+        <Text style={[styles.title, { color: colors.textPrimary }]}>{t('settings.title')}</Text>
       </View>
 
-      <ScrollView
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* General */}
+      <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <SettingsSection title={t('settings.sectionGeneral')}>
-          <SettingsRow
-            icon="palette"
-            label={t('settings.theme')}
-            value={themeLabels[theme]}
-            onPress={showThemePicker}
-            isLast
-          />
+          <SettingsRow icon="droplet" label={t('settings.theme')} first>
+            <ThemeSegmented />
+          </SettingsRow>
+          {permission !== 'unsupported' && (
+            <SettingsRow
+              icon="bell"
+              label={t('settings.notifications')}
+              value={notificationValue}
+              onPress={permission === 'granted' ? undefined : handleNotifications}
+            />
+          )}
         </SettingsSection>
 
-        {/* Data */}
         <SettingsSection title={t('settings.sectionData')}>
-          <SettingsRow
-            icon="delete-forever"
-            label={t('settings.dataReset')}
-            onPress={handleDataReset}
-            danger
-            isLast
-          />
+          <SettingsRow icon="upload" label={t('settings.backupExport')} onPress={handleExport} first />
+          <SettingsRow icon="download" label={t('settings.backupRestore')} onPress={handleRestore} />
+          <SettingsRow icon="file-text" label={t('settings.importText')} onPress={() => setShowImport(true)} />
+          <SettingsRow icon="trash-2" label={t('settings.dataReset')} onPress={handleDataReset} danger />
         </SettingsSection>
 
-        {/* Info */}
         <SettingsSection title={t('settings.sectionInfo')}>
-          <SettingsRow icon="info" label={t('settings.appVersion')} value="1.0.0" isLast />
+          {Platform.OS === 'android' && (
+            <SettingsRow icon="star" label={t('settings.rateApp')} onPress={openStore} external first />
+          )}
+          {adPrivacyRequired && (
+            <SettingsRow icon="sliders" label={t('settings.adPrivacy')} onPress={showAdPrivacyOptions} />
+          )}
+          <SettingsRow
+            icon="shield"
+            label={t('settings.privacyPolicy')}
+            onPress={() => Linking.openURL(PRIVACY_POLICY_URL)}
+            external
+            first={Platform.OS !== 'android'}
+          />
+          <SettingsRow icon="info" label={t('settings.appVersion')} value={appVersion} />
         </SettingsSection>
       </ScrollView>
+
+      <TextImportModal visible={showImport} onClose={() => setShowImport(false)} />
     </ScreenContainer>
   );
 }
@@ -215,64 +286,76 @@ export default function SettingsScreen() {
 const styles = StyleSheet.create({
   header: {
     paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.md,
-    paddingBottom: Spacing.xs,
+    paddingTop: Spacing.sm,
+    paddingBottom: Spacing.sm,
   },
   title: {
-    fontSize: 26,
-    lineHeight: 34,
-    fontWeight: '700' as const,
-    letterSpacing: -0.3,
+    ...Typography.title,
   },
   content: {
-    paddingTop: Spacing.sm,
-    paddingBottom: Spacing.xxl,
+    paddingTop: Spacing.xs,
+    paddingBottom: Spacing.xxxl,
   },
   section: {
-    marginBottom: Spacing.lg,
+    marginBottom: Spacing.xl,
   },
   sectionTitle: {
-    fontSize: 12,
-    fontWeight: '700' as const,
-    textTransform: 'uppercase',
-    letterSpacing: 0.8,
-    paddingHorizontal: Spacing.lg,
+    fontSize: 13,
+    lineHeight: 18,
+    fontWeight: '500',
+    paddingHorizontal: Spacing.lg + 4,
     marginBottom: Spacing.xs,
   },
-  sectionContent: {
+  panel: {
     marginHorizontal: Spacing.md,
-    borderRadius: BorderRadius.lg,
+    borderRadius: Radius.panel,
+    borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
   },
   row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: Spacing.sm + 2,
+    paddingVertical: Spacing.sm,
     paddingHorizontal: Spacing.md,
     gap: Spacing.sm,
   },
-  iconCircle: {
-    width: 30,
-    height: 30,
-    borderRadius: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
+  separator: {
+    position: 'absolute',
+    top: 0,
+    left: 46,
+    right: 0,
+    height: StyleSheet.hairlineWidth,
   },
-  rowLabel: {
-    fontSize: 15,
-    lineHeight: 22,
-    fontWeight: '400' as const,
-    flex: 1,
-  },
-  rowRight: {
+  rowMain: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.xxs,
+    gap: Spacing.sm,
+    minHeight: 32,
+  },
+  rowLabel: {
+    ...Typography.body,
+    flex: 1,
   },
   rowValue: {
-    fontSize: 15,
-    lineHeight: 22,
-    fontWeight: '400' as const,
-    color: '#6B7280',
+    ...Typography.callout,
+  },
+  segmented: {
+    flexDirection: 'row',
+    borderRadius: Radius.control + 2,
+    padding: 3,
+    gap: 3,
+  },
+  segment: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    height: 34,
+    borderRadius: 9,
+  },
+  segmentText: {
+    fontSize: 13,
+  },
+  segmentTextActive: {
+    fontWeight: '600',
   },
 });

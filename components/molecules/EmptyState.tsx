@@ -1,34 +1,27 @@
 import React from 'react';
-import { View, Text, StyleSheet } from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import { View, StyleSheet } from 'react-native';
+import { Text } from '@/components/atoms/AppText';
+import { Icon, type IconName } from '@/components/atoms/Icon';
 import { useTheme } from '@/hooks/useTheme';
-import { Typography, Spacing } from '@/constants/theme';
+import { Spacing, Typography } from '@/constants/theme';
 
 interface EmptyStateProps {
-  icon?: keyof typeof MaterialIcons.glyphMap;
+  icon?: IconName;
   title: string;
   description?: string;
+  compact?: boolean;
 }
 
-export function EmptyState({
-  icon = 'check-circle-outline',
-  title,
-  description,
-}: EmptyStateProps) {
+/** Quiet empty state: a muted line icon and two lines of text, no decoration. */
+export function EmptyState({ icon, title, description, compact = false }: EmptyStateProps) {
   const { colors } = useTheme();
 
   return (
-    <View style={styles.container}>
-      <View style={[styles.iconCircle, { backgroundColor: colors.surfaceVariant }]}>
-        <MaterialIcons name={icon} size={40} color={colors.primary} />
-      </View>
-      <Text style={[styles.title, { color: colors.textPrimary }]}>
-        {title}
-      </Text>
-      {description && (
-        <Text style={[styles.description, { color: colors.textSecondary }]}>
-          {description}
-        </Text>
+    <View style={[styles.container, compact && styles.compact]}>
+      {icon && <Icon name={icon} size={28} color={colors.textTertiary} />}
+      <Text style={[styles.title, { color: colors.textPrimary }]}>{title}</Text>
+      {!!description && (
+        <Text style={[styles.description, { color: colors.textSecondary }]}>{description}</Text>
       )}
     </View>
   );
@@ -39,29 +32,22 @@ const styles = StyleSheet.create({
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: Spacing.xl,
-    gap: Spacing.sm,
+    paddingHorizontal: Spacing.xxl,
+    gap: Spacing.xs,
     minHeight: 240,
   },
-  iconCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: Spacing.xs,
+  compact: {
+    flex: 0,
+    minHeight: 0,
+    paddingVertical: Spacing.xxl,
   },
   title: {
-    fontSize: 18,
-    fontWeight: '600' as const,
+    ...Typography.bodyMedium,
     textAlign: 'center',
-    lineHeight: 26,
+    marginTop: Spacing.xxs,
   },
   description: {
-    fontSize: 15,
-    lineHeight: 22,
-    fontWeight: '400' as const,
+    ...Typography.callout,
     textAlign: 'center',
-    opacity: 0.8,
   },
 });

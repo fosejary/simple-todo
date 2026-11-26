@@ -1,0 +1,10 @@
+{
+  "ios": {
+    "CFBundleDisplayName": "Sunlist"
+  },
+  "android": {
+    "app_name": "Sunlist",
+    "widget_label": "Sunlist · Today",
+    "widget_simpletodowidget_description": "See today's tasks on your home screen and check them off"
+  }
+}

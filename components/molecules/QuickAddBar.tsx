@@ -1,86 +1,63 @@
 import React, { useState, useRef } from 'react';
-import {
-  View,
-  TextInput,
-  Pressable,
-  Text,
-  StyleSheet,
-  Keyboard,
-} from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import { View, Pressable, StyleSheet, TextInput as RNTextInput } from 'react-native';
 import { useTranslation } from 'react-i18next';
+import { TextInput } from '@/components/atoms/AppText';
+import { Icon } from '@/components/atoms/Icon';
 import { useTheme } from '@/hooks/useTheme';
-import { Typography, Spacing, BorderRadius, Elevation } from '@/constants/theme';
+import { Spacing, Radius, Elevation } from '@/constants/theme';
 
 interface QuickAddBarProps {
   onAdd: (title: string) => void;
   placeholder?: string;
 }
 
-export function QuickAddBar({
-  onAdd,
-  placeholder,
-}: QuickAddBarProps) {
+/** Floating pill at the bottom of list screens. Focus stays put for rapid entry. */
+export function QuickAddBar({ onAdd, placeholder }: QuickAddBarProps) {
   const { colors } = useTheme();
   const { t } = useTranslation();
-  const resolvedPlaceholder = placeholder ?? t('quickAdd.placeholder');
+  const label = placeholder ?? t('quickAdd.placeholder');
   const [text, setText] = useState('');
-  const inputRef = useRef<TextInput>(null);
+  const inputRef = useRef<RNTextInput>(null);
+  const canAdd = text.trim().length > 0;
 
   const handleAdd = () => {
     const trimmed = text.trim();
     if (!trimmed) return;
     onAdd(trimmed);
     setText('');
-    // Keep focus on input for rapid entry
   };
 
   return (
-    <View
-      style={[
-        styles.container,
-        { backgroundColor: colors.surface },
-        Elevation.level3,
-      ]}
-    >
+    <View style={styles.container}>
       <View
         style={[
-          styles.inputWrapper,
-          {
-            backgroundColor: colors.surfaceVariant,
-          },
+          styles.pill,
+          { backgroundColor: colors.surface, borderColor: colors.hairline },
+          Elevation.float,
         ]}
       >
-        <MaterialIcons
-          name="add"
-          size={20}
-          color={text.trim() ? colors.primary : colors.textDisabled}
-          style={styles.inputIcon}
-        />
+        <Icon name="plus" size={20} color={colors.textTertiary} />
         <TextInput
           ref={inputRef}
           style={[styles.input, { color: colors.textPrimary }]}
-          placeholder={resolvedPlaceholder}
-          placeholderTextColor={colors.textDisabled}
+          placeholder={label}
+          placeholderTextColor={colors.textTertiary}
           value={text}
           onChangeText={setText}
           onSubmitEditing={handleAdd}
           returnKeyType="done"
           blurOnSubmit={false}
+          accessibilityLabel={label}
         />
         <Pressable
           onPress={handleAdd}
-          disabled={!text.trim()}
-          style={[
-            styles.addButton,
-            {
-              backgroundColor: text.trim()
-                ? colors.primary
-                : colors.outline,
-            },
-          ]}
+          disabled={!canAdd}
+          style={[styles.send, { backgroundColor: canAdd ? colors.primary : colors.surfaceVariant }]}
+          accessibilityRole="button"
+          accessibilityLabel={t('detail.add')}
+          accessibilityState={{ disabled: !canAdd }}
         >
-          <MaterialIcons name="arrow-upward" size={18} color="#FFFFFF" />
+          <Icon name="arrow-up" size={18} color={canAdd ? colors.onPrimary : colors.textTertiary} />
         </Pressable>
       </View>
     </View>
@@ -90,31 +67,29 @@ export function QuickAddBar({
 const styles = StyleSheet.create({
   container: {
     paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
+    paddingTop: Spacing.xs,
+    paddingBottom: Spacing.sm,
   },
-  inputWrapper: {
+  pill: {
     flexDirection: 'row',
     alignItems: 'center',
-    borderRadius: BorderRadius.xl,
-    paddingLeft: Spacing.xs,
-    paddingRight: Spacing.xxs + 2,
-    paddingVertical: Spacing.xxs + 2,
-  },
-  inputIcon: {
-    marginLeft: Spacing.xxs,
-    marginRight: Spacing.xxs,
+    gap: Spacing.xs + 2,
+    height: 52,
+    borderRadius: Radius.pill,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingLeft: 18,
+    paddingRight: 8,
   },
   input: {
     flex: 1,
-    fontSize: 15,
+    fontSize: 16,
     lineHeight: 22,
-    fontWeight: '400' as const,
     paddingVertical: Spacing.xs,
   },
-  addButton: {
-    width: 34,
-    height: 34,
-    borderRadius: 17,
+  send: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     alignItems: 'center',
     justifyContent: 'center',
   },

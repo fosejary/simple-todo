@@ -1,0 +1,10 @@
+{
+  "ios": {
+    "CFBundleDisplayName": "Sunlist"
+  },
+  "android": {
+    "app_name": "Sunlist",
+    "widget_label": "Sunlist · 오늘 할 일",
+    "widget_simpletodowidget_description": "오늘 할 일을 홈 화면에서 보고 바로 체크하세요"
+  }
+}

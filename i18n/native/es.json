@@ -1,0 +1,10 @@
+{
+  "ios": {
+    "CFBundleDisplayName": "Sunlist"
+  },
+  "android": {
+    "app_name": "Sunlist",
+    "widget_label": "Sunlist · Hoy",
+    "widget_simpletodowidget_description": "Mira las tareas de hoy en tu pantalla de inicio y márcalas al instante"
+  }
+}

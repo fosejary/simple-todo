@@ -1,41 +1,34 @@
 import React from 'react';
-import {
-  FlexWidget,
-  TextWidget,
-} from 'react-native-android-widget';
+import { FlexWidget, TextWidget } from 'react-native-android-widget';
 import type { Todo } from '@/lib/types';
 
-/**
- * Props passed from the widget task handler after reading AsyncStorage.
- */
+type Hex = `#${string}`;
+
 export interface TodoWidgetProps {
-  todos: Pick<Todo, 'id' | 'title' | 'is_completed' | 'color'>[];
-  dateLabel: string; // e.g. "4월 6일 월요일"
+  todos: (Pick<Todo, 'id' | 'title' | 'is_completed'> & { tint: Hex | null })[];
+  dateLabel: string;
+  doneCount: number;
+  totalCount: number;
+  strings: { empty: string; tapToAdd: string; more: string; untitled: string };
 }
 
 const MAX_DISPLAY_ITEMS = 5;
 
-// Design tokens (matching constants/theme.ts light mode)
-const COLORS = {
-  primary: '#2563EB' as const,
-  background: '#FFFFFF' as const,
-  textPrimary: '#1A1D21' as const,
-  textSecondary: '#6B7280' as const,
-  textTertiary: '#9CA3AF' as const,
-  success: '#10B981' as const,
-  divider: '#ECEEF0' as const,
-  checkBorder: '#D1D5DB' as const,
-  transparent: 'rgba(0, 0, 0, 0)' as const,
+// Light tokens from constants/theme.ts (direction B).
+const C = {
+  surface: '#FFFFFF' as Hex,
+  textPrimary: '#1A1A18' as Hex,
+  textSecondary: '#55524C' as Hex,
+  textTertiary: '#77736C' as Hex,
+  outline: '#C4BFB5' as Hex,
+  track: '#E9E4DA' as Hex,
+  accent: '#EE8F1F' as Hex,
+  accentText: '#A55A08' as Hex,
 };
 
-/**
- * Android Home Screen Widget for SimpleTodo.
- * Shows today's tasks (up to 5) with completion status.
- */
-export function TodoWidget({ todos, dateLabel }: TodoWidgetProps) {
-  const incomplete = todos.filter((t) => !t.is_completed);
-  const completed = todos.filter((t) => t.is_completed);
-  const display = [...incomplete, ...completed].slice(0, MAX_DISPLAY_ITEMS);
+/** Today's tasks on the home screen. Tap a circle to complete; tap elsewhere to open the app. */
+export function TodoWidget({ todos, dateLabel, doneCount, totalCount, strings }: TodoWidgetProps) {
+  const display = todos.slice(0, MAX_DISPLAY_ITEMS);
   const remaining = todos.length - display.length;
 
   return (
@@ -44,176 +37,86 @@ export function TodoWidget({ todos, dateLabel }: TodoWidgetProps) {
         height: 'match_parent',
         width: 'match_parent',
         flexDirection: 'column',
-        backgroundColor: COLORS.background,
-        borderRadius: 16,
-        padding: 16,
+        backgroundColor: C.surface,
+        borderRadius: 20,
+        paddingHorizontal: 16,
+        paddingTop: 14,
+        paddingBottom: 10,
       }}
       clickAction="OPEN_APP"
     >
-      {/* Header */}
-      <FlexWidget
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          width: 'match_parent',
-          marginBottom: 12,
-        }}
-      >
-        {/* App icon placeholder */}
-        <FlexWidget
-          style={{
-            width: 24,
-            height: 24,
-            backgroundColor: COLORS.primary,
-            borderRadius: 6,
-            alignItems: 'center',
-            justifyContent: 'center',
-            marginRight: 8,
-          }}
-        >
+      <FlexWidget style={{ flexDirection: 'row', alignItems: 'center', width: 'match_parent' }}>
+        <TextWidget
+          text={dateLabel}
+          style={{ fontSize: 15, color: C.textPrimary, fontWeight: '600' }}
+          maxLines={1}
+        />
+        <FlexWidget style={{ flex: 1 }} />
+        {totalCount > 0 ? (
           <TextWidget
-            text="ST"
-            style={{
-              fontSize: 10,
-              color: '#FFFFFF',
-              fontWeight: '700',
-            }}
+            text={`${doneCount}/${totalCount}`}
+            style={{ fontSize: 13, color: C.accentText, fontWeight: '600' }}
           />
-        </FlexWidget>
-
-        {/* App name + date */}
-        <FlexWidget
-          style={{
-            flexDirection: 'column',
-            flex: 1,
-          }}
-        >
-          <TextWidget
-            text="SimpleTodo"
-            style={{
-              fontSize: 14,
-              color: COLORS.textPrimary,
-              fontWeight: '600',
-            }}
-          />
-          <TextWidget
-            text={dateLabel}
-            style={{
-              fontSize: 11,
-              color: COLORS.textSecondary,
-            }}
-          />
-        </FlexWidget>
-
-        {/* Counter badge */}
-        <FlexWidget
-          style={{
-            backgroundColor: incomplete.length > 0 ? COLORS.primary : COLORS.success,
-            borderRadius: 10,
-            paddingHorizontal: 8,
-            paddingVertical: 2,
-          }}
-        >
-          <TextWidget
-            text={
-              incomplete.length > 0
-                ? `${completed.length}/${todos.length}`
-                : 'Done!'
-            }
-            style={{
-              fontSize: 11,
-              color: '#FFFFFF',
-              fontWeight: '600',
-            }}
-          />
-        </FlexWidget>
+        ) : null}
       </FlexWidget>
 
-      {/* Divider */}
-      <FlexWidget
-        style={{
-          width: 'match_parent',
-          height: 1,
-          backgroundColor: COLORS.divider,
-          marginBottom: 8,
-        }}
-      />
+      {totalCount > 0 ? (
+        <FlexWidget
+          style={{
+            flexDirection: 'row',
+            width: 'match_parent',
+            height: 4,
+            borderRadius: 2,
+            backgroundColor: C.track,
+            marginTop: 8,
+            marginBottom: 6,
+          }}
+        >
+          {doneCount > 0 ? (
+            <FlexWidget style={{ flex: doneCount, height: 4, borderRadius: 2, backgroundColor: C.accent }} />
+          ) : null}
+          {totalCount - doneCount > 0 ? <FlexWidget style={{ flex: totalCount - doneCount, height: 4 }} /> : null}
+        </FlexWidget>
+      ) : null}
 
-      {/* Todo List or Empty State */}
       {display.length === 0 ? (
         <FlexWidget
           style={{
             flex: 1,
+            width: 'match_parent',
             flexDirection: 'column',
             alignItems: 'center',
             justifyContent: 'center',
-            width: 'match_parent',
           }}
         >
+          <TextWidget text={strings.empty} style={{ fontSize: 14, color: C.textSecondary }} />
           <TextWidget
-            text="오늘 할일이 없어요"
-            style={{
-              fontSize: 14,
-              color: COLORS.textTertiary,
-            }}
-          />
-          <TextWidget
-            text="탭하여 추가하기"
-            style={{
-              fontSize: 12,
-              color: COLORS.primary,
-              marginTop: 4,
-            }}
+            text={strings.tapToAdd}
+            style={{ fontSize: 13, color: C.accentText, marginTop: 4, fontWeight: '600' }}
           />
         </FlexWidget>
       ) : (
-        <FlexWidget
-          style={{
-            flexDirection: 'column',
-            width: 'match_parent',
-            flex: 1,
-          }}
-        >
+        <FlexWidget style={{ flexDirection: 'column', width: 'match_parent', flex: 1 }}>
           {display.map((todo) => (
-            <TodoItemRow key={todo.id} todo={todo} />
+            <TodoRow key={todo.id} todo={todo} untitled={strings.untitled} />
           ))}
-          {remaining > 0 && (
+          {remaining > 0 ? (
             <TextWidget
-              text={`+${remaining}개 더 보기`}
-              style={{
-                fontSize: 11,
-                color: COLORS.primary,
-                marginTop: 4,
-                textAlign: 'center',
-              }}
+              text={strings.more.replace('{{count}}', String(remaining))}
+              style={{ fontSize: 12, color: C.textTertiary, marginTop: 2, marginLeft: 36 }}
             />
-          )}
+          ) : null}
         </FlexWidget>
       )}
     </FlexWidget>
   );
 }
 
-/**
- * Single todo item row for the widget.
- */
-function TodoItemRow({
-  todo,
-}: {
-  todo: Pick<Todo, 'id' | 'title' | 'is_completed' | 'color'>;
-}) {
-  const isCompleted = todo.is_completed;
-  const titleColor = isCompleted ? COLORS.textTertiary : COLORS.textPrimary;
-
-  // For completed items, prefix with strikethrough unicode combining character
-  // since TextWidget does not support textDecorationLine
-  const displayTitle = todo.title || '(제목 없음)';
-  const formattedTitle = isCompleted
-    ? displayTitle
-        .split('')
-        .map((ch) => ch + '\u0336')
-        .join('')
-    : displayTitle;
+function TodoRow({ todo, untitled }: { todo: TodoWidgetProps['todos'][number]; untitled: string }) {
+  const done = todo.is_completed;
+  const title = todo.title || untitled;
+  // TextWidget has no textDecorationLine; combine each char with a strike overlay.
+  const shown = done ? title.split('').map((ch) => ch + '̶').join('') : title;
 
   return (
     <FlexWidget
@@ -221,62 +124,39 @@ function TodoItemRow({
         flexDirection: 'row',
         alignItems: 'center',
         width: 'match_parent',
-        paddingVertical: 4,
+        borderRadius: 10,
+        backgroundColor: todo.tint ?? C.surface,
+        paddingRight: 8,
+        marginTop: 2,
       }}
       clickAction="OPEN_APP"
     >
-      {/* Check circle */}
       <FlexWidget
-        style={{
-          width: 18,
-          height: 18,
-          borderRadius: 9,
-          borderWidth: isCompleted ? 0 : 2,
-          borderColor: isCompleted ? COLORS.success : COLORS.checkBorder,
-          backgroundColor: isCompleted ? COLORS.success : COLORS.transparent,
-          alignItems: 'center',
-          justifyContent: 'center',
-          marginRight: 10,
-        }}
+        style={{ width: 36, height: 36, alignItems: 'center', justifyContent: 'center' }}
+        clickAction="TOGGLE"
+        clickActionData={{ id: todo.id }}
       >
-        {isCompleted ? (
-          <TextWidget
-            text={'\u2713'}
-            style={{
-              fontSize: 10,
-              color: '#FFFFFF',
-              fontWeight: '700',
-            }}
-          />
-        ) : null}
-      </FlexWidget>
-
-      {/* Color indicator */}
-      {todo.color ? (
         <FlexWidget
           style={{
-            width: 3,
-            height: 14,
-            backgroundColor: todo.color as `#${string}`,
-            borderRadius: 2,
-            marginRight: 8,
+            width: 20,
+            height: 20,
+            borderRadius: 10,
+            borderWidth: done ? 0 : 2,
+            borderColor: C.outline,
+            backgroundColor: done ? C.accent : ('#00000000' as Hex),
+            alignItems: 'center',
+            justifyContent: 'center',
           }}
-        />
-      ) : null}
-
-      {/* Title wrapped in FlexWidget for flex: 1 */}
-      <FlexWidget
-        style={{
-          flex: 1,
-          flexDirection: 'column',
-        }}
-      >
+        >
+          {done ? (
+            <TextWidget text={'✓'} style={{ fontSize: 11, color: C.textPrimary, fontWeight: '700' }} />
+          ) : null}
+        </FlexWidget>
+      </FlexWidget>
+      <FlexWidget style={{ flex: 1, flexDirection: 'column' }}>
         <TextWidget
-          text={formattedTitle}
-          style={{
-            fontSize: 13,
-            color: titleColor,
-          }}
+          text={shown}
+          style={{ fontSize: 14, color: done ? C.textTertiary : C.textPrimary }}
           maxLines={1}
           truncate="END"
         />

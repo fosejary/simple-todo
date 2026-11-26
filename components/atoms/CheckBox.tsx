@@ -3,20 +3,26 @@ import { Pressable, StyleSheet } from 'react-native';
 import Animated, {
   useSharedValue,
   useAnimatedStyle,
+  withSequence,
   withSpring,
+  withTiming,
 } from 'react-native-reanimated';
-import * as Haptics from 'expo-haptics';
-import { MaterialIcons } from '@expo/vector-icons';
+import { Feather } from '@expo/vector-icons';
+import { useTranslation } from 'react-i18next';
 import { useTheme } from '@/hooks/useTheme';
 
 interface CheckBoxProps {
   checked: boolean;
   onToggle: () => void;
   size?: number;
+  /** Ring color while unchecked (e.g. on a tinted row). */
+  ringColor?: string;
 }
 
-export function CheckBox({ checked, onToggle, size = 24 }: CheckBoxProps) {
+/** Round check. Completed = the sun color with an ink check. */
+export function CheckBox({ checked, onToggle, size = 22, ringColor }: CheckBoxProps) {
   const { colors } = useTheme();
+  const { t } = useTranslation();
   const scale = useSharedValue(1);
 
   const animatedStyle = useAnimatedStyle(() => ({
@@ -24,43 +30,43 @@ export function CheckBox({ checked, onToggle, size = 24 }: CheckBoxProps) {
   }));
 
   const handlePress = () => {
-    scale.value = withSpring(1, { damping: 4, stiffness: 300 }, () => {
-      scale.value = 1;
-    });
-    scale.value = 1.3;
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    scale.value = withSequence(
+      withTiming(0.86, { duration: 70 }),
+      withSpring(1, { damping: 14, stiffness: 320 })
+    );
     onToggle();
   };
 
-  const borderColor = checked ? colors.success : colors.outline;
-  const bgColor = checked ? colors.success : 'transparent';
-
   return (
-    <Pressable onPress={handlePress} hitSlop={8}>
+    <Pressable
+      onPress={handlePress}
+      hitSlop={11}
+      accessibilityRole="checkbox"
+      accessibilityState={{ checked }}
+      accessibilityLabel={checked ? t('a11y.markIncomplete') : t('a11y.markComplete')}
+    >
       <Animated.View
         style={[
-          styles.container,
+          styles.box,
           {
             width: size,
             height: size,
             borderRadius: size / 2,
-            borderColor,
-            backgroundColor: bgColor,
-            borderWidth: checked ? 0 : 2,
+            borderWidth: checked ? 0 : 1.5,
+            borderColor: ringColor ?? colors.outline,
+            backgroundColor: checked ? colors.accent : 'transparent',
           },
           animatedStyle,
         ]}
       >
-        {checked && (
-          <MaterialIcons name="check" size={size * 0.65} color="#FFFFFF" />
-        )}
+        {checked && <Feather name="check" size={Math.round(size * 0.62)} color={colors.onAccent} />}
       </Animated.View>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
+  box: {
     alignItems: 'center',
     justifyContent: 'center',
   },

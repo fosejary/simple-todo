@@ -1,543 +1,440 @@
-import React, { useState, useRef, useMemo, useCallback, useEffect } from 'react';
-import { View, Text, TextInput, Pressable, StyleSheet, Alert, Platform } from 'react-native';
+import React, { memo, useState } from 'react';
+import { View, Pressable, StyleSheet } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
-import Animated, { FadeIn, FadeOut, Layout } from 'react-native-reanimated';
+import Animated, { FadeIn, FadeOut, LinearTransition } from 'react-native-reanimated';
+import ReanimatedSwipeable, {
+  type SwipeableMethods,
+} from 'react-native-gesture-handler/ReanimatedSwipeable';
+import { format, parseISO } from 'date-fns';
 import { useTranslation } from 'react-i18next';
+import { Text } from '@/components/atoms/AppText';
+import { Icon, type IconName } from '@/components/atoms/Icon';
 import { CheckBox } from '@/components/atoms/CheckBox';
 import { useTheme } from '@/hooks/useTheme';
-import { Typography, Spacing, BorderRadius, Elevation } from '@/constants/theme';
-import { Todo, Category } from '@/lib/types';
-import { format, parseISO } from 'date-fns';
+import { useTodoActions } from '@/hooks/useTodoActions';
+import { useTodoStore } from '@/stores/todoStore';
+import { getDateLocale } from '@/i18n/dateLocale';
+import { Spacing, Radius, Elevation, Typography, todoRowTint } from '@/constants/theme';
+import { Todo } from '@/lib/types';
+
+export type RowPosition = 'single' | 'first' | 'middle' | 'last';
 
 interface TodoItemProps {
   todo: Todo;
-  onToggle: (id: string) => void;
   onPress: (id: string) => void;
-  onToggleSubtask?: (todoId: string, subtaskId: string) => void;
-  onAddSubtask?: (todoId: string, title: string) => void;
-  onDeleteSubtask?: (todoId: string, subtaskId: string) => void;
-  onUpdateSubtask?: (todoId: string, subtaskId: string, title: string) => void;
-  onDelete?: (id: string) => void;
-  onMoveUp?: (id: string) => void;
-  onMoveDown?: (id: string) => void;
-  onUpdateMemo?: (id: string, memo: string) => void;
+  /** Where the row sits in its grouped panel (draws corners and separators). */
+  position?: RowPosition;
+  /** Always show the due date (search results, overdue, category lists). */
   showDate?: boolean;
-  categories?: Category[];
+  /** Hide the category label, e.g. inside that category's own screen. */
+  hideCategory?: boolean;
+  /** Long-press handler, used to start a drag. */
+  onLongPress?: () => void;
+  /** This row is being dragged. */
+  active?: boolean;
 }
 
-export function TodoItem({
-  todo,
-  onToggle,
+const SWIPE_ACTION_W = 76;
+
+function SwipeAction({
+  icon,
+  label,
+  color,
   onPress,
-  onToggleSubtask,
-  onAddSubtask,
-  onDeleteSubtask,
-  onUpdateSubtask,
-  onDelete,
-  onMoveUp,
-  onMoveDown,
-  onUpdateMemo,
+}: {
+  icon: IconName;
+  label: string;
+  color: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={[styles.swipeAction, { backgroundColor: color }]}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+    >
+      <Icon name={icon} size={18} color="#FFFFFF" />
+      <Text style={styles.swipeActionText} numberOfLines={1}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+function TodoItemBase({
+  todo,
+  onPress,
+  position = 'single',
   showDate = false,
-  categories = [],
+  hideCategory = false,
+  onLongPress,
+  active = false,
 }: TodoItemProps) {
-  const { colors } = useTheme();
+  const { colors, isDark } = useTheme();
   const { t } = useTranslation();
-  const subtasks = todo.subtasks || [];
+  const { toggle, remove, postponeToTomorrow, skip } = useTodoActions();
+  const toggleSubtask = useTodoStore((s) => s.toggleSubtask);
+  const category = useTodoStore((s) =>
+    todo.category_id && !hideCategory ? s.categories.find((c) => c.id === todo.category_id) : undefined
+  );
+  const [showSubtasks, setShowSubtasks] = useState(false);
+
+  const subtasks = todo.subtasks ?? [];
   const hasSubtasks = subtasks.length > 0;
-  const completedCount = subtasks.filter((st) => st.is_completed).length;
-  const [expanded, setExpanded] = useState(false);
-  const [newSubtaskText, setNewSubtaskText] = useState('');
-  const [memoText, setMemoText] = useState(todo.memo || '');
-  const memoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const inputRef = useRef<TextInput>(null);
-  const [editingSubtaskId, setEditingSubtaskId] = useState<string | null>(null);
-  const [editingSubtaskText, setEditingSubtaskText] = useState('');
+  const doneCount = subtasks.filter((st) => st.is_completed).length;
 
-  const handleSubtaskEditDone = useCallback(
-    (subtaskId: string) => {
-      const trimmed = editingSubtaskText.trim();
-      if (trimmed && onUpdateSubtask) {
-        onUpdateSubtask(todo.id, subtaskId, trimmed);
-      }
-      setEditingSubtaskId(null);
-      setEditingSubtaskText('');
-    },
-    [editingSubtaskText, onUpdateSubtask, todo.id]
+  const today = format(new Date(), 'yyyy-MM-dd');
+  const isOverdue = !todo.is_completed && !!todo.due_date && todo.due_date < today;
+  const showDateBadge = !!todo.due_date && (showDate || isOverdue);
+  const isRecurring = !!todo.recurrence;
+  const canMove = !todo.is_completed && !!todo.due_date && todo.due_date <= today;
+  const isImportant = todo.priority > 0;
+  const hasMemo = !!todo.memo?.trim();
+  const hasMeta = showDateBadge || !!todo.due_time || !!category || isRecurring || hasMemo;
+
+  const tint = todoRowTint(todo.color, isDark);
+  const isFirst = position === 'single' || position === 'first';
+  const isLast = position === 'single' || position === 'last';
+  const corners = active
+    ? { borderRadius: Radius.panel }
+    : {
+        borderTopLeftRadius: isFirst ? Radius.panel : 0,
+        borderTopRightRadius: isFirst ? Radius.panel : 0,
+        borderBottomLeftRadius: isLast ? Radius.panel : 0,
+        borderBottomRightRadius: isLast ? Radius.panel : 0,
+      };
+
+  const renderRightActions = (_p: unknown, _t: unknown, methods: SwipeableMethods) => (
+    <View style={styles.swipeActions}>
+      {canMove && isRecurring && (
+        <SwipeAction
+          icon="skip-forward"
+          label={t('todo.swipeSkip')}
+          color={colors.swipeNeutral}
+          onPress={() => {
+            methods.close();
+            skip(todo.id);
+          }}
+        />
+      )}
+      {canMove && !isRecurring && (
+        <SwipeAction
+          icon="sunrise"
+          label={t('todo.swipeTomorrow')}
+          color={colors.swipeNeutral}
+          onPress={() => {
+            methods.close();
+            postponeToTomorrow(todo.id);
+          }}
+        />
+      )}
+      <SwipeAction
+        icon="trash-2"
+        label={t('common.delete')}
+        color={colors.error}
+        onPress={() => {
+          methods.close();
+          remove(todo.id);
+        }}
+      />
+    </View>
   );
 
-  // Sync memoText when todo.memo changes externally
-  useEffect(() => {
-    setMemoText(todo.memo || '');
-  }, [todo.memo]);
+  const sortedSubtasks = showSubtasks
+    ? subtasks.slice().sort((a, b) => {
+        if (a.is_completed !== b.is_completed) return a.is_completed ? 1 : -1;
+        return a.sort_order - b.sort_order;
+      })
+    : [];
 
-  const handleMemoChange = useCallback(
-    (text: string) => {
-      setMemoText(text);
-      if (memoTimerRef.current) clearTimeout(memoTimerRef.current);
-      memoTimerRef.current = setTimeout(() => {
-        onUpdateMemo?.(todo.id, text);
-      }, 300);
-    },
-    [todo.id, onUpdateMemo]
-  );
-
-  const category = useMemo(() => {
-    if (!todo.category_id || categories.length === 0) return null;
-    return categories.find((c) => c.id === todo.category_id) || null;
-  }, [todo.category_id, categories]);
-
-  const handleMainPress = () => {
-    setExpanded(!expanded);
-  };
-
-  const handleAddSubtask = () => {
-    const trimmed = newSubtaskText.trim();
-    if (!trimmed || !onAddSubtask) return;
-    onAddSubtask(todo.id, trimmed);
-    setNewSubtaskText('');
-  };
-
-  const handleDelete = () => {
-    if (!onDelete) return;
-    if (Platform.OS === 'web') {
-      if (window.confirm(t('todo.deleteConfirmMessage'))) {
-        onDelete(todo.id);
-      }
-    } else {
-      Alert.alert(
-        t('todo.deleteConfirmTitle'),
-        t('todo.deleteConfirmMessage'),
-        [
-          { text: t('common.cancel'), style: 'cancel' },
-          { text: t('common.delete'), style: 'destructive', onPress: () => onDelete(todo.id) },
-        ]
-      );
-    }
-  };
+  const metaColor = colors.textSecondary;
 
   return (
-    <View style={{ opacity: todo.is_completed ? 0.6 : 1 }}>
     <Animated.View
-      entering={FadeIn.duration(200)}
-      exiting={FadeOut.duration(200)}
-      layout={Layout.springify()}
-      style={styles.cardWrapper}
+      entering={FadeIn.duration(180)}
+      exiting={FadeOut.duration(150)}
+      layout={LinearTransition.duration(200)}
+      style={[styles.outer, active && [styles.activeLift, Elevation.float]]}
     >
       <View
         style={[
-          styles.card,
+          styles.panelCell,
+          corners,
           {
-            backgroundColor: colors.surface,
-            borderLeftWidth: todo.color ? 4 : 0,
-            borderLeftColor: todo.color || 'transparent',
+            backgroundColor: tint ?? colors.surface,
+            borderColor: colors.hairline,
+            borderTopWidth: isFirst || active ? StyleSheet.hairlineWidth : 0,
+            borderBottomWidth: isLast || active ? StyleSheet.hairlineWidth : 0,
           },
-          Elevation.level1,
         ]}
       >
-        {/* Main row */}
-        <Pressable
-          onPress={handleMainPress}
-          onLongPress={() => onPress(todo.id)}
-          style={styles.container}
+        <ReanimatedSwipeable
+          friction={2}
+          rightThreshold={40}
+          overshootRight={false}
+          renderRightActions={renderRightActions}
+          enabled={!active}
         >
-          <CheckBox
-            checked={todo.is_completed}
-            onToggle={() => onToggle(todo.id)}
-          />
-          <View style={styles.content}>
-            <Text
-              style={[
-                styles.title,
-                {
-                  color: todo.is_completed
-                    ? colors.textDisabled
-                    : colors.textPrimary,
-                  textDecorationLine: todo.is_completed
-                    ? 'line-through'
-                    : 'none',
-                },
-              ]}
-              numberOfLines={2}
-            >
-              {todo.title}
-            </Text>
-            <View style={styles.meta}>
-              {showDate && todo.due_date && (
-                <View style={[styles.metaBadge, { backgroundColor: colors.surfaceVariant }]}>
-                  <MaterialIcons name="event" size={11} color={colors.textSecondary} />
-                  <Text style={[styles.metaText, { color: colors.textSecondary }]}>
-                    {format(parseISO(todo.due_date), 'MM.dd')}
-                  </Text>
+          <View style={{ backgroundColor: tint ?? colors.surface }}>
+            {!isFirst && !active && (
+              <View style={[styles.separator, { backgroundColor: colors.divider }]} />
+            )}
+            <View style={styles.row}>
+              {/* Full-row tap target sits behind the controls so they don't nest inside it. */}
+              <Pressable
+                onPress={() => onPress(todo.id)}
+                onLongPress={onLongPress}
+                delayLongPress={350}
+                style={({ pressed }) => [
+                  StyleSheet.absoluteFill,
+                  pressed && { backgroundColor: colors.divider },
+                ]}
+                accessibilityRole="button"
+                accessibilityLabel={todo.title}
+                accessibilityHint={onLongPress ? t('a11y.openDetailOrDrag') : t('a11y.openDetail')}
+              />
+              <CheckBox checked={todo.is_completed} onToggle={() => toggle(todo.id)} />
+
+              <View style={[styles.content, styles.passThrough]}>
+                <Text
+                  style={[
+                    styles.title,
+                    todo.is_completed
+                      ? { color: colors.textTertiary, textDecorationLine: 'line-through' }
+                      : { color: colors.textPrimary },
+                  ]}
+                  numberOfLines={2}
+                >
+                  {todo.title}
+                </Text>
+
+                {hasMeta && (
+                  <View style={styles.meta}>
+                    {showDateBadge && (
+                      <Text style={[styles.metaText, { color: isOverdue ? colors.error : metaColor }]}>
+                        {format(parseISO(todo.due_date!), t('dateFormat.monthDay'), {
+                          locale: getDateLocale(),
+                        })}
+                      </Text>
+                    )}
+                    {!!todo.due_time && (
+                      <View style={styles.metaItem}>
+                        <Icon name="bell" size={12} color={metaColor} />
+                        <Text style={[styles.metaText, { color: metaColor }]}>
+                          {format(parseISO(`2000-01-01T${todo.due_time}:00`), 'p', { locale: getDateLocale() })}
+                        </Text>
+                      </View>
+                    )}
+                    {category && (
+                      <View style={styles.metaItem}>
+                        <View style={[styles.categoryDot, { backgroundColor: category.color }]} />
+                        <Text style={[styles.metaText, styles.categoryText, { color: metaColor }]} numberOfLines={1}>
+                          {category.name}
+                        </Text>
+                      </View>
+                    )}
+                    {isRecurring && <Icon name="repeat" size={12} color={colors.textTertiary} />}
+                    {hasMemo && <Icon name="align-left" size={12} color={colors.textTertiary} />}
+                  </View>
+                )}
+              </View>
+
+              {isImportant && (
+                <View style={styles.passThrough}>
+                  <MaterialIcons name="star" size={18} color={colors.accentText} accessibilityLabel={t('a11y.important')} />
                 </View>
               )}
-              {category && (
-                <View
+
+              {hasSubtasks && (
+                <Pressable
+                  onPress={() => setShowSubtasks((v) => !v)}
+                  hitSlop={8}
                   style={[
-                    styles.categoryChip,
+                    styles.subtaskChip,
                     {
-                      backgroundColor: `${category.color}15`,
+                      backgroundColor: tint
+                        ? isDark
+                          ? 'rgba(255,255,255,0.08)'
+                          : 'rgba(255,255,255,0.65)'
+                        : colors.surfaceVariant,
                     },
                   ]}
+                  accessibilityRole="button"
+                  accessibilityState={{ expanded: showSubtasks }}
+                  accessibilityLabel={t('a11y.toggleSubtasks')}
                 >
-                  <View
-                    style={[
-                      styles.categoryDot,
-                      { backgroundColor: category.color },
-                    ]}
-                  />
                   <Text
                     style={[
-                      styles.categoryChipText,
-                      { color: category.color },
+                      styles.subtaskChipText,
+                      { color: tint && !isDark ? '#55524C' : colors.textSecondary },
                     ]}
-                    numberOfLines={1}
                   >
-                    {category.name}
+                    {doneCount}/{subtasks.length}
                   </Text>
-                </View>
-              )}
-              {hasSubtasks && (
-                <View style={[styles.subtaskBadge, { backgroundColor: colors.surfaceVariant }]}>
-                  <MaterialIcons
-                    name={completedCount === subtasks.length ? 'check-circle' : 'checklist'}
-                    size={11}
-                    color={completedCount === subtasks.length ? colors.success : colors.textSecondary}
+                  <Icon
+                    name={showSubtasks ? 'chevron-up' : 'chevron-down'}
+                    size={14}
+                    color={tint && !isDark ? '#55524C' : colors.textSecondary}
                   />
-                  <Text
-                    style={[
-                      styles.badgeText,
-                      { color: completedCount === subtasks.length ? colors.success : colors.textSecondary },
-                    ]}
-                  >
-                    {completedCount}/{subtasks.length}
-                  </Text>
-                </View>
-              )}
-            </View>
-          </View>
-          <MaterialIcons
-            name={expanded ? 'keyboard-arrow-up' : 'keyboard-arrow-down'}
-            size={20}
-            color={colors.textDisabled}
-          />
-        </Pressable>
-
-        {/* Expanded panel: subtasks + inline add -- inside the card */}
-        {expanded && (
-          <View
-            style={[
-              styles.expandedPanel,
-              {
-                borderTopColor: colors.divider,
-              },
-            ]}
-          >
-            {/* Memo field */}
-            {onUpdateMemo && (
-              <View style={styles.memoSection}>
-                <MaterialIcons name="notes" size={14} color={colors.textSecondary} />
-                <TextInput
-                  style={[styles.memoInput, { color: colors.textPrimary, backgroundColor: colors.surfaceVariant }]}
-                  value={memoText}
-                  onChangeText={handleMemoChange}
-                  placeholder={t('todo.memoPlaceholder')}
-                  placeholderTextColor={colors.textDisabled}
-                  multiline
-                />
-              </View>
-            )}
-
-            {/* Existing subtasks */}
-            {subtasks
-              .slice()
-              .sort((a, b) => {
-                if (a.is_completed !== b.is_completed) return a.is_completed ? 1 : -1;
-                return a.sort_order - b.sort_order;
-              })
-              .map((st) => (
-                <View key={st.id} style={styles.subtaskRow}>
-                  <Pressable
-                    onPress={() => onToggleSubtask?.(todo.id, st.id)}
-                    hitSlop={6}
-                  >
-                    <MaterialIcons
-                      name={st.is_completed ? 'check-circle' : 'radio-button-unchecked'}
-                      size={16}
-                      color={st.is_completed ? colors.success : colors.outline}
-                    />
-                  </Pressable>
-                  {editingSubtaskId === st.id ? (
-                    <TextInput
-                      style={[
-                        styles.subtaskTitle,
-                        {
-                          color: colors.textPrimary,
-                          padding: 0,
-                        },
-                      ]}
-                      value={editingSubtaskText}
-                      onChangeText={setEditingSubtaskText}
-                      onBlur={() => handleSubtaskEditDone(st.id)}
-                      onSubmitEditing={() => handleSubtaskEditDone(st.id)}
-                      autoFocus
-                      returnKeyType="done"
-                    />
-                  ) : (
-                    <Pressable
-                      style={styles.subtaskTitlePressable}
-                      onPress={() => {
-                        setEditingSubtaskId(st.id);
-                        setEditingSubtaskText(st.title);
-                      }}
-                    >
-                      <Text
-                        style={[
-                          styles.subtaskTitle,
-                          {
-                            color: st.is_completed ? colors.textDisabled : colors.textPrimary,
-                            textDecorationLine: st.is_completed ? 'line-through' : 'none',
-                          },
-                        ]}
-                        numberOfLines={1}
-                      >
-                        {st.title}
-                      </Text>
-                    </Pressable>
-                  )}
-                  <Pressable
-                    onPress={() => onDeleteSubtask?.(todo.id, st.id)}
-                    hitSlop={6}
-                    style={styles.subtaskDeleteBtn}
-                  >
-                    <MaterialIcons name="close" size={14} color={colors.textDisabled} />
-                  </Pressable>
-                </View>
-              ))}
-
-            {/* Inline add input */}
-            <View style={styles.addRow}>
-              <MaterialIcons name="add" size={16} color={colors.primary} />
-              <TextInput
-                ref={inputRef}
-                style={[styles.addInput, { color: colors.textPrimary }]}
-                value={newSubtaskText}
-                onChangeText={setNewSubtaskText}
-                placeholder={t('todo.subtaskPlaceholder')}
-                placeholderTextColor={colors.textDisabled}
-                onSubmitEditing={handleAddSubtask}
-                returnKeyType="done"
-                blurOnSubmit={false}
-              />
-              {newSubtaskText.trim().length > 0 && (
-                <Pressable onPress={handleAddSubtask} hitSlop={8}>
-                  <MaterialIcons name="check" size={18} color={colors.primary} />
                 </Pressable>
               )}
             </View>
 
-            {/* Quick actions: move + delete + open detail sheet */}
-            <View style={[styles.actionRow, { borderTopColor: colors.divider }]}>
-              <View style={styles.moveButtons}>
-                {onMoveUp && !todo.is_completed && (
+            {showSubtasks && (
+              <View style={styles.subtaskList}>
+                {sortedSubtasks.map((st) => (
                   <Pressable
-                    onPress={() => onMoveUp(todo.id)}
-                    hitSlop={6}
-                    style={[styles.moveBtn, { backgroundColor: colors.surfaceVariant }]}
+                    key={st.id}
+                    onPress={() => toggleSubtask(todo.id, st.id)}
+                    style={styles.subtaskRow}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: st.is_completed }}
                   >
-                    <MaterialIcons name="arrow-upward" size={14} color={colors.textSecondary} />
+                    <View
+                      style={[
+                        styles.subtaskCheck,
+                        st.is_completed
+                          ? { backgroundColor: colors.accent }
+                          : { borderWidth: 1.5, borderColor: colors.outline },
+                      ]}
+                    >
+                      {st.is_completed && <Icon name="check" size={11} color={colors.onAccent} />}
+                    </View>
+                    <Text
+                      style={[
+                        styles.subtaskTitle,
+                        st.is_completed
+                          ? { color: colors.textTertiary, textDecorationLine: 'line-through' }
+                          : { color: colors.textPrimary },
+                      ]}
+                      numberOfLines={1}
+                    >
+                      {st.title}
+                    </Text>
                   </Pressable>
-                )}
-                {onMoveDown && !todo.is_completed && (
-                  <Pressable
-                    onPress={() => onMoveDown(todo.id)}
-                    hitSlop={6}
-                    style={[styles.moveBtn, { backgroundColor: colors.surfaceVariant }]}
-                  >
-                    <MaterialIcons name="arrow-downward" size={14} color={colors.textSecondary} />
-                  </Pressable>
-                )}
-                {onDelete && (
-                  <Pressable
-                    onPress={handleDelete}
-                    hitSlop={6}
-                    style={[styles.moveBtn, { backgroundColor: colors.errorContainer }]}
-                  >
-                    <MaterialIcons name="close" size={14} color={colors.error} />
-                  </Pressable>
-                )}
+                ))}
               </View>
-              <Pressable
-                onPress={() => onPress(todo.id)}
-                style={[styles.detailButton, { backgroundColor: colors.surfaceVariant }]}
-              >
-                <MaterialIcons name="tune" size={14} color={colors.textSecondary} />
-                <Text style={[styles.detailButtonText, { color: colors.textSecondary }]}>
-                  {t('todo.detailButton')}
-                </Text>
-              </Pressable>
-            </View>
+            )}
           </View>
-        )}
+        </ReanimatedSwipeable>
       </View>
     </Animated.View>
-    </View>
   );
 }
 
+export const TodoItem = memo(TodoItemBase);
+
 const styles = StyleSheet.create({
-  cardWrapper: {
-    paddingHorizontal: Spacing.md,
-    marginBottom: Spacing.xs,
+  outer: {
+    marginHorizontal: Spacing.md,
   },
-  card: {
-    borderRadius: BorderRadius.md,
+  activeLift: {
+    borderRadius: Radius.panel,
+  },
+  panelCell: {
     overflow: 'hidden',
+    borderLeftWidth: StyleSheet.hairlineWidth,
+    borderRightWidth: StyleSheet.hairlineWidth,
   },
-  container: {
+  separator: {
+    position: 'absolute',
+    top: 0,
+    left: 50,
+    right: 0,
+    height: StyleSheet.hairlineWidth,
+  },
+  row: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm + 2,
+    paddingLeft: Spacing.md,
+    paddingRight: Spacing.sm,
+    paddingVertical: Spacing.sm,
     gap: Spacing.sm,
+    minHeight: 56,
   },
   content: {
     flex: 1,
-    gap: 4,
+    gap: 2,
+  },
+  passThrough: {
+    pointerEvents: 'none',
   },
   title: {
-    fontSize: 16,
-    lineHeight: 22,
-    fontWeight: '500' as const,
+    ...Typography.body,
   },
   meta: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
-    marginTop: 2,
+    flexWrap: 'wrap',
+    columnGap: 10,
+    rowGap: 2,
   },
-  metaBadge: {
+  metaItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
+    gap: 4,
   },
   metaText: {
-    fontSize: 11,
-    fontWeight: '500' as const,
-  },
-  subtaskBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 6,
-    paddingVertical: 2,
-    borderRadius: 6,
-  },
-  badgeText: {
-    fontSize: 11,
-    fontWeight: '600' as const,
-  },
-  categoryChip: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-    paddingHorizontal: 7,
-    paddingVertical: 2,
-    borderRadius: 6,
+    ...Typography.small,
   },
   categoryDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 7,
+    height: 7,
+    borderRadius: 3.5,
   },
-  categoryChipText: {
-    fontSize: 11,
-    fontWeight: '500' as const,
-    maxWidth: 80,
+  categoryText: {
+    maxWidth: 120,
   },
-  expandedPanel: {
-    paddingHorizontal: Spacing.md,
-    paddingTop: Spacing.xs,
-    paddingBottom: Spacing.xxs,
-    borderTopWidth: StyleSheet.hairlineWidth,
-  },
-  memoSection: {
+  subtaskChip: {
     flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: Spacing.xs,
-    paddingVertical: 6,
-    marginBottom: 4,
+    alignItems: 'center',
+    gap: 2,
+    paddingLeft: 8,
+    paddingRight: 4,
+    height: 24,
+    borderRadius: Radius.sm,
   },
-  memoInput: {
-    ...Typography.caption,
-    flex: 1,
-    paddingHorizontal: Spacing.xs,
-    paddingVertical: Spacing.xs,
-    borderRadius: 6,
-    minHeight: 32,
-    maxHeight: 80,
-    textAlignVertical: 'top',
+  subtaskChipText: {
+    fontSize: 12,
+    fontWeight: '500',
+    fontVariant: ['tabular-nums'],
+  },
+  subtaskList: {
+    paddingLeft: 50,
+    paddingRight: Spacing.md,
+    paddingBottom: Spacing.xs,
   },
   subtaskRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: Spacing.xs,
-    paddingVertical: 6,
+    gap: Spacing.xs + 2,
+    minHeight: 36,
   },
-  subtaskTitle: {
-    ...Typography.caption,
-    flex: 1,
-  },
-  subtaskDeleteBtn: {
-    padding: 2,
-  },
-  addRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: Spacing.xs,
-    paddingVertical: 6,
-    marginTop: 2,
-  },
-  addInput: {
-    ...Typography.caption,
-    flex: 1,
-    padding: 0,
-  },
-  actionRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingVertical: 8,
-    marginTop: 4,
-    borderTopWidth: StyleSheet.hairlineWidth,
-  },
-  moveButtons: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-  },
-  moveBtn: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
+  subtaskCheck: {
+    width: 18,
+    height: 18,
+    borderRadius: 9,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  subtaskTitlePressable: {
+  subtaskTitle: {
     flex: 1,
+    ...Typography.callout,
   },
-  detailButton: {
+  swipeActions: {
     flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 16,
   },
-  detailButtonText: {
+  swipeAction: {
+    width: SWIPE_ACTION_W,
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  swipeActionText: {
+    color: '#FFFFFF',
     fontSize: 12,
-    fontWeight: '500' as const,
+    lineHeight: 16,
+    fontWeight: '600',
   },
 });

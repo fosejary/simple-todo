@@ -1,0 +1,10 @@
+{
+  "ios": {
+    "CFBundleDisplayName": "Sunlist"
+  },
+  "android": {
+    "app_name": "Sunlist",
+    "widget_label": "Sunlist · 今日のタスク",
+    "widget_simpletodowidget_description": "今日のタスクをホーム画面で確認して、そのままチェック"
+  }
+}

@@ -16,14 +16,16 @@ export interface Todo {
   is_completed: boolean;
   completed_at: string | null;
   due_date: string | null; // YYYY-MM-DD
-  due_time: string | null; // HH:mm
-  priority: 0 | 1 | 2; // kept for backward compat, unused in UI
+  due_time: string | null; // HH:mm — reminder time on due_date
+  priority: 0 | 1 | 2; // 0 = normal, 1+ = important (starred)
   color: string | null; // pastel hex color
   category_id: string | null;
   recurrence: Recurrence | null;
   is_deleted: boolean;
   sort_order: number;
   subtasks: SubTask[];
+  /** ISO time a snoozed reminder should fire again ("10분 뒤"). */
+  snooze_until?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -70,10 +72,10 @@ export const PASTEL_COLORS = [
   '#E8DAEF', // lavender
 ] as const;
 
-// Category auto-assign color palette
+// Category auto-assign color palette (toned to sit inside the warm-neutral UI)
 export const CATEGORY_COLORS = [
-  '#2563EB', '#7C3AED', '#10B981', '#F59E0B', '#EF4444',
-  '#EC4899', '#06B6D4', '#8B5CF6', '#F97316', '#14B8A6',
+  '#5677CF', '#D0627F', '#3E9A74', '#8466C9', '#D99A2B',
+  '#2F9BB3', '#C8613A', '#7A8B3A', '#B05FA8', '#5E6E85',
 ] as const;
 
 // Icon palette for categories (MaterialIcons names)

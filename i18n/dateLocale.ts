@@ -12,9 +12,9 @@ const DATE_LOCALE_MAP: Record<string, DateFnsLocale> = {
 
 /**
  * Returns the date-fns Locale object matching the current i18n language.
- * Falls back to Korean if the current language is not mapped.
+ * Falls back to English if the current language is not mapped.
  */
 export function getDateLocale(): DateFnsLocale {
   const lang = i18n.language;
-  return DATE_LOCALE_MAP[lang] ?? ko;
+  return DATE_LOCALE_MAP[lang] ?? enUS;
 }

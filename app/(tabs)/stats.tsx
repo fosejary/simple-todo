@@ -1,18 +1,9 @@
 import React, { useState, useMemo, useCallback } from 'react';
-import {
-  View,
-  Text,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  KeyboardAvoidingView,
-  Platform,
-} from 'react-native';
-import { MaterialIcons } from '@expo/vector-icons';
+import { View, Pressable, ScrollView, StyleSheet, KeyboardAvoidingView, Platform } from 'react-native';
+import { Gesture, GestureDetector, Directions } from 'react-native-gesture-handler';
 import {
   format,
   addMonths,
-  subMonths,
   startOfMonth,
   endOfMonth,
   startOfWeek,
@@ -24,15 +15,20 @@ import {
 } from 'date-fns';
 import { useTranslation } from 'react-i18next';
 import { getDateLocale } from '@/i18n/dateLocale';
+import { Text } from '@/components/atoms/AppText';
+import { Icon } from '@/components/atoms/Icon';
 import { ScreenContainer } from '@/components/layout/ScreenContainer';
 import { TodoItem } from '@/components/molecules/TodoItem';
 import { TodoDetailSheet } from '@/components/organisms/TodoDetailSheet';
+import { positionOf } from '@/components/organisms/TodoSectionList';
 import { QuickAddBar } from '@/components/molecules/QuickAddBar';
 import { EmptyState } from '@/components/molecules/EmptyState';
 import { useTheme } from '@/hooks/useTheme';
 import { useTodoStore } from '@/stores/todoStore';
 import { Todo } from '@/lib/types';
-import { Typography, Spacing, BorderRadius, Elevation } from '@/constants/theme';
+import { Spacing, Radius, Typography } from '@/constants/theme';
+
+const SATURDAY = '#5677CF';
 
 export default function CalendarScreen() {
   const { colors } = useTheme();
@@ -40,367 +36,285 @@ export default function CalendarScreen() {
   const dateLocale = getDateLocale();
   const dayLabels = t('calendar.dayLabels', { returnObjects: true }) as string[];
 
-  // Store selectors - raw state only
   const todos = useTodoStore((s) => s.todos);
-  const categories = useTodoStore((s) => s.categories);
   const addTodo = useTodoStore((s) => s.addTodo);
-  const toggleTodo = useTodoStore((s) => s.toggleTodo);
-  const toggleSubtask = useTodoStore((s) => s.toggleSubtask);
-  const addSubtask = useTodoStore((s) => s.addSubtask);
-  const deleteSubtask = useTodoStore((s) => s.deleteSubtask);
-  const updateSubtask = useTodoStore((s) => s.updateSubtask);
-  const updateTodo = useTodoStore((s) => s.updateTodo);
-  const deleteTodo = useTodoStore((s) => s.deleteTodo);
 
-  const [currentMonth, setCurrentMonth] = useState(new Date());
-  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [currentMonth, setCurrentMonth] = useState(() => new Date());
+  const [selectedDate, setSelectedDate] = useState<Date>(() => new Date());
   const [selectedTodoId, setSelectedTodoId] = useState<string | null>(null);
 
-  // Build a map of date -> todos for the current month (and visible overflow days)
-  const calendarDays = useMemo(() => {
-    const monthStart = startOfMonth(currentMonth);
-    const monthEnd = endOfMonth(currentMonth);
-    const calStart = startOfWeek(monthStart, { weekStartsOn: 0 });
-    const calEnd = endOfWeek(monthEnd, { weekStartsOn: 0 });
-    return eachDayOfInterval({ start: calStart, end: calEnd });
-  }, [currentMonth]);
+  const calendarDays = useMemo(
+    () =>
+      eachDayOfInterval({
+        start: startOfWeek(startOfMonth(currentMonth), { weekStartsOn: 0 }),
+        end: endOfWeek(endOfMonth(currentMonth), { weekStartsOn: 0 }),
+      }),
+    [currentMonth]
+  );
 
-  // Map: dateStr -> { total, completed }
   const todosByDate = useMemo(() => {
     const map: Record<string, { total: number; completed: number; todos: Todo[] }> = {};
-    const activeTodos = todos.filter((t) => !t.is_deleted && t.due_date);
-    for (const t of activeTodos) {
-      const dateStr = t.due_date!;
-      if (!map[dateStr]) {
-        map[dateStr] = { total: 0, completed: 0, todos: [] };
-      }
-      map[dateStr].total++;
-      if (t.is_completed) {
-        map[dateStr].completed++;
-      }
-      map[dateStr].todos.push(t);
+    for (const todo of todos) {
+      if (todo.is_deleted || !todo.due_date) continue;
+      const entry = (map[todo.due_date] ??= { total: 0, completed: 0, todos: [] });
+      entry.total++;
+      if (todo.is_completed) entry.completed++;
+      entry.todos.push(todo);
     }
     return map;
   }, [todos]);
 
   const selectedDateStr = format(selectedDate, 'yyyy-MM-dd');
+  const selectedEntry = todosByDate[selectedDateStr];
 
   const selectedDayTodos = useMemo(() => {
-    const entry = todosByDate[selectedDateStr];
-    if (!entry) return [];
-    return entry.todos.sort((a, b) => {
+    if (!selectedEntry) return [];
+    return selectedEntry.todos.slice().sort((a, b) => {
       if (a.is_completed !== b.is_completed) return a.is_completed ? 1 : -1;
       return a.sort_order - b.sort_order;
     });
-  }, [todosByDate, selectedDateStr]);
+  }, [selectedEntry]);
 
-  const handlePrevMonth = useCallback(() => {
-    setCurrentMonth((prev) => subMonths(prev, 1));
+  const changeMonth = (delta: number) => {
+    const next = addMonths(currentMonth, delta);
+    setCurrentMonth(next);
+    // Keep the list in sync with what's on screen: today if visible, else the 1st.
+    setSelectedDate(isSameMonth(next, new Date()) ? new Date() : startOfMonth(next));
+  };
+
+  const goToToday = useCallback(() => {
+    setCurrentMonth(new Date());
+    setSelectedDate(new Date());
   }, []);
 
-  const handleNextMonth = useCallback(() => {
-    setCurrentMonth((prev) => addMonths(prev, 1));
-  }, []);
-
-  const handleDatePress = useCallback((date: Date) => {
-    setSelectedDate(date);
-  }, []);
-
-  const handleAddTodo = useCallback(
-    (title: string) => {
-      addTodo({ title, due_date: selectedDateStr });
-    },
-    [selectedDateStr]
+  const swipe = Gesture.Race(
+    Gesture.Fling().direction(Directions.LEFT).runOnJS(true).onEnd(() => changeMonth(1)),
+    Gesture.Fling().direction(Directions.RIGHT).runOnJS(true).onEnd(() => changeMonth(-1))
   );
 
-  const getDotColor = (dateStr: string): string | null => {
-    const entry = todosByDate[dateStr];
-    if (!entry || entry.total === 0) return null;
-    if (entry.completed === entry.total) return colors.success;
-    if (entry.completed > 0) return colors.warning;
-    return colors.textDisabled;
-  };
+  const handleAddTodo = useCallback((title: string) => addTodo({ title, due_date: selectedDateStr }), [selectedDateStr]);
+
+  const viewingToday = isToday(selectedDate) && isSameMonth(currentMonth, new Date());
 
   return (
     <ScreenContainer>
-      <KeyboardAvoidingView
-        style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={90}
-      >
-      {/* Header */}
-      <View style={styles.header}>
-        <Text style={[styles.title, { color: colors.textPrimary }]}>
-          {t('calendar.title')}
-        </Text>
-      </View>
-
-      <ScrollView
-        contentContainerStyle={styles.content}
-        showsVerticalScrollIndicator={false}
-      >
-        {/* Calendar Card */}
-        <View
-          style={[
-            styles.calendarCard,
-            { backgroundColor: colors.surface },
-            Elevation.level1,
-          ]}
-        >
-          {/* Month Navigation */}
-          <View style={styles.monthNav}>
+      <KeyboardAvoidingView style={styles.flex} behavior="padding" keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}>
+        <View style={styles.header}>
+          <Text style={[styles.title, { color: colors.textPrimary }]}>{t('calendar.title')}</Text>
+          {!viewingToday && (
             <Pressable
-              onPress={handlePrevMonth}
-              hitSlop={12}
-              style={[styles.navButton, { backgroundColor: colors.surfaceVariant }]}
+              onPress={goToToday}
+              style={({ pressed }) => [
+                styles.todayButton,
+                { borderColor: colors.hairline, backgroundColor: pressed ? colors.surfaceVariant : colors.surface },
+              ]}
+              accessibilityRole="button"
             >
-              <MaterialIcons
-                name="chevron-left"
-                size={22}
-                color={colors.textPrimary}
-              />
+              <View style={[styles.sunDot, { backgroundColor: colors.accent }]} />
+              <Text style={[styles.todayButtonText, { color: colors.textPrimary }]}>{t('detail.today')}</Text>
             </Pressable>
-            <Text style={[styles.monthLabel, { color: colors.textPrimary }]}>
-              {format(currentMonth, t('dateFormat.monthYear'), { locale: dateLocale })}
-            </Text>
-            <Pressable
-              onPress={handleNextMonth}
-              hitSlop={12}
-              style={[styles.navButton, { backgroundColor: colors.surfaceVariant }]}
-            >
-              <MaterialIcons
-                name="chevron-right"
-                size={22}
-                color={colors.textPrimary}
-              />
-            </Pressable>
-          </View>
+          )}
+        </View>
 
-          {/* Day-of-week headers */}
-          <View style={styles.weekRow}>
-            {dayLabels.map((label: string, idx: number) => (
-              <View key={label} style={styles.weekCell}>
-                <Text
-                  style={[
-                    styles.weekLabel,
-                    {
-                      color:
-                        idx === 0
-                          ? colors.error
-                          : idx === 6
-                          ? colors.primary
-                          : colors.textSecondary,
-                    },
-                  ]}
-                >
-                  {label}
+        <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false} keyboardShouldPersistTaps="handled">
+          <GestureDetector gesture={swipe}>
+            <View style={[styles.calendar, { backgroundColor: colors.surface, borderColor: colors.hairline }]}>
+              <View style={styles.monthNav}>
+                <Pressable onPress={() => changeMonth(-1)} hitSlop={10} style={styles.navButton} accessibilityRole="button" accessibilityLabel={t('a11y.prevMonth')}>
+                  <Icon name="chevron-left" size={22} color={colors.textSecondary} />
+                </Pressable>
+                <Text style={[styles.monthLabel, { color: colors.textPrimary }]}>
+                  {format(currentMonth, t('dateFormat.monthYear'), { locale: dateLocale })}
                 </Text>
+                <Pressable onPress={() => changeMonth(1)} hitSlop={10} style={styles.navButton} accessibilityRole="button" accessibilityLabel={t('a11y.nextMonth')}>
+                  <Icon name="chevron-right" size={22} color={colors.textSecondary} />
+                </Pressable>
               </View>
-            ))}
-          </View>
 
-          {/* Calendar Grid */}
-          <View style={styles.calendarGrid}>
-            {calendarDays.map((day) => {
-              const dateStr = format(day, 'yyyy-MM-dd');
-              const isCurrentMonth = isSameMonth(day, currentMonth);
-              const isSelected = isSameDay(day, selectedDate);
-              const isTodayDate = isToday(day);
-              const dotColor = getDotColor(dateStr);
-              const dayOfWeek = day.getDay();
-
-              return (
-                <Pressable
-                  key={dateStr}
-                  onPress={() => handleDatePress(day)}
-                  style={styles.dayCell}
-                >
-                  <View
+              <View style={styles.weekRow}>
+                {dayLabels.map((label, idx) => (
+                  <Text
+                    key={label}
                     style={[
-                      styles.dayCircle,
-                      isTodayDate && {
-                        backgroundColor: colors.primary,
-                      },
-                      isSelected &&
-                        !isTodayDate && {
-                          backgroundColor: `${colors.primary}15`,
-                          borderWidth: 1.5,
-                          borderColor: colors.primary,
-                        },
+                      styles.weekLabel,
+                      { color: idx === 0 ? colors.error : idx === 6 ? SATURDAY : colors.textTertiary },
                     ]}
                   >
-                    <Text
-                      style={[
-                        styles.dayText,
-                        {
-                          color: !isCurrentMonth
-                            ? colors.textDisabled
-                            : isTodayDate
-                            ? '#FFFFFF'
-                            : dayOfWeek === 0
-                            ? colors.error
-                            : dayOfWeek === 6
-                            ? colors.primary
-                            : colors.textPrimary,
-                        },
-                        isTodayDate && { fontWeight: '700' },
-                        isSelected && !isTodayDate && { fontWeight: '600' },
-                      ]}
-                    >
-                      {format(day, 'd')}
-                    </Text>
-                  </View>
-                  {dotColor && (
-                    <View
-                      style={[
-                        styles.dot,
-                        { backgroundColor: dotColor },
-                      ]}
-                    />
-                  )}
-                </Pressable>
-              );
-            })}
-          </View>
-        </View>
+                    {label}
+                  </Text>
+                ))}
+              </View>
 
-        {/* Divider between calendar and todos */}
-        <View style={styles.selectedDateSection}>
-          <View style={[styles.dividerLine, { backgroundColor: colors.divider }]} />
-          <View style={styles.selectedDateHeader}>
-            <Text
-              style={[styles.selectedDateLabel, { color: colors.textPrimary }]}
-            >
+              <View style={styles.grid}>
+                {calendarDays.map((day) => {
+                  const dateStr = format(day, 'yyyy-MM-dd');
+                  const inMonth = isSameMonth(day, currentMonth);
+                  const selected = isSameDay(day, selectedDate);
+                  const isTodayDate = isToday(day);
+                  const entry = todosByDate[dateStr];
+                  const dotColor =
+                    entry && entry.total > 0
+                      ? entry.completed === entry.total
+                        ? colors.accent
+                        : colors.textTertiary
+                      : 'transparent';
+                  const dow = day.getDay();
+                  const baseColor = !inMonth
+                    ? colors.textDisabled
+                    : dow === 0
+                      ? colors.error
+                      : dow === 6
+                        ? SATURDAY
+                        : colors.textPrimary;
+
+                  return (
+                    <Pressable
+                      key={dateStr}
+                      onPress={() => setSelectedDate(day)}
+                      style={styles.dayCell}
+                      accessibilityRole="button"
+                      accessibilityState={{ selected }}
+                    >
+                      <View
+                        style={[
+                          styles.dayCircle,
+                          selected
+                            ? { backgroundColor: colors.primary }
+                            : isTodayDate && { backgroundColor: colors.accentSoft },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.dayText,
+                            { color: selected ? colors.onPrimary : isTodayDate ? colors.accentText : baseColor },
+                            (selected || isTodayDate) && styles.dayTextStrong,
+                          ]}
+                        >
+                          {format(day, 'd')}
+                        </Text>
+                      </View>
+                      <View style={[styles.dot, { backgroundColor: dotColor, opacity: inMonth ? 1 : 0.4 }]} />
+                    </Pressable>
+                  );
+                })}
+              </View>
+            </View>
+          </GestureDetector>
+
+          <View style={styles.selectedHeader}>
+            <Text style={[styles.selectedLabel, { color: colors.textPrimary }]}>
               {format(selectedDate, t('dateFormat.monthDayWeekday'), { locale: dateLocale })}
             </Text>
-            {selectedDayTodos.length > 0 && (
-              <View style={[styles.todoCountBadge, { backgroundColor: colors.primaryContainer }]}>
-                <Text
-                  style={[styles.todoCountText, { color: colors.primary }]}
-                >
-                  {selectedDayTodos.length}
-                </Text>
-              </View>
+            {selectedEntry && selectedEntry.total > 0 && (
+              <Text style={[styles.selectedCount, { color: colors.textTertiary }]}>
+                {t('today.progress', { done: selectedEntry.completed, total: selectedEntry.total })}
+              </Text>
             )}
           </View>
-        </View>
 
-        {/* Selected date todos */}
-        {selectedDayTodos.length === 0 ? (
-          <EmptyState
-            icon="event-available"
-            title={t('calendar.emptyTitle')}
-            description={t('calendar.emptyDesc')}
-          />
-        ) : (
-          <View style={styles.todoList}>
-            {selectedDayTodos.map((todo) => (
+          {selectedDayTodos.length === 0 ? (
+            <EmptyState icon="calendar" title={t('calendar.emptyTitle')} description={t('calendar.emptyDesc')} compact />
+          ) : (
+            selectedDayTodos.map((todo, i) => (
               <TodoItem
                 key={todo.id}
                 todo={todo}
-                onToggle={(id) => toggleTodo(id)}
-                onToggleSubtask={toggleSubtask}
-                onAddSubtask={addSubtask}
-                onDeleteSubtask={deleteSubtask}
-                onUpdateSubtask={updateSubtask}
-                onDelete={deleteTodo}
-                onUpdateMemo={(id, memo) => updateTodo(id, { memo })}
                 onPress={setSelectedTodoId}
-                categories={categories}
+                position={positionOf(i, selectedDayTodos.length)}
               />
-            ))}
-          </View>
-        )}
-      </ScrollView>
+            ))
+          )}
+        </ScrollView>
 
-      {/* Quick Add Bar */}
-      <QuickAddBar onAdd={handleAddTodo} placeholder={t('calendar.addPlaceholder')} />
-
-      {/* Bottom Sheet */}
-      {selectedTodoId && (
-        <TodoDetailSheet
-          todoId={selectedTodoId}
-          onClose={() => setSelectedTodoId(null)}
-        />
-      )}
+        <QuickAddBar onAdd={handleAddTodo} placeholder={t('calendar.addPlaceholder')} />
       </KeyboardAvoidingView>
+
+      {selectedTodoId && <TodoDetailSheet todoId={selectedTodoId} onClose={() => setSelectedTodoId(null)} />}
     </ScreenContainer>
   );
 }
 
 const styles = StyleSheet.create({
-  flex: {
-    flex: 1,
-  },
+  flex: { flex: 1 },
   header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
     paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.md,
-    paddingBottom: Spacing.xs,
+    paddingTop: Spacing.sm,
+    paddingBottom: Spacing.md,
+    minHeight: 52,
   },
   title: {
-    fontSize: 26,
-    lineHeight: 34,
-    fontWeight: '700' as const,
-    letterSpacing: -0.3,
+    ...Typography.title,
+  },
+  todayButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    height: 34,
+    borderRadius: 17,
+    borderWidth: StyleSheet.hairlineWidth,
+  },
+  sunDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  todayButtonText: {
+    fontSize: 14,
+    fontWeight: '500',
   },
   content: {
-    paddingBottom: Spacing.xxl,
+    paddingBottom: Spacing.xl,
   },
-  // Calendar Card
-  calendarCard: {
+  calendar: {
     marginHorizontal: Spacing.md,
-    borderRadius: BorderRadius.lg,
-    paddingVertical: Spacing.sm,
-    marginTop: Spacing.xs,
+    borderRadius: Radius.panel,
+    borderWidth: StyleSheet.hairlineWidth,
+    paddingTop: Spacing.xxs,
+    paddingBottom: Spacing.xs,
+    paddingHorizontal: Spacing.xxs,
   },
-  // Month navigation
   monthNav: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: Spacing.md,
-    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.xxs,
+    paddingVertical: Spacing.xxs,
   },
   navButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 40,
+    height: 40,
     alignItems: 'center',
     justifyContent: 'center',
   },
   monthLabel: {
-    fontSize: 17,
-    fontWeight: '600' as const,
-    letterSpacing: -0.2,
+    fontSize: 16,
+    lineHeight: 22,
+    fontWeight: '600',
   },
-  // Week header
   weekRow: {
     flexDirection: 'row',
-    paddingHorizontal: Spacing.sm,
     marginBottom: Spacing.xxs,
-    marginTop: Spacing.xxs,
-  },
-  weekCell: {
-    flex: 1,
-    alignItems: 'center',
-    paddingVertical: Spacing.xxs,
   },
   weekLabel: {
+    flex: 1,
+    textAlign: 'center',
     fontSize: 12,
-    fontWeight: '600' as const,
+    lineHeight: 16,
+    paddingVertical: Spacing.xxs,
   },
-  // Calendar grid
-  calendarGrid: {
+  grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    paddingHorizontal: Spacing.sm,
   },
   dayCell: {
-    width: '14.28%',
-    aspectRatio: 1,
+    width: '14.2857%',
+    height: 48,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 2,
   },
   dayCircle: {
     width: 36,
@@ -410,52 +324,30 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
   dayText: {
-    fontSize: 14,
-    fontWeight: '500' as const,
+    fontSize: 15,
+  },
+  dayTextStrong: {
+    fontWeight: '600',
   },
   dot: {
     width: 5,
     height: 5,
     borderRadius: 2.5,
     marginTop: 2,
-    position: 'absolute',
-    bottom: 2,
   },
-  // Selected date section
-  selectedDateSection: {
-    marginTop: Spacing.lg,
-  },
-  dividerLine: {
-    height: StyleSheet.hairlineWidth,
-    marginHorizontal: Spacing.lg,
-  },
-  selectedDateHeader: {
+  selectedHeader: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'baseline',
     justifyContent: 'space-between',
     paddingHorizontal: Spacing.lg,
-    paddingTop: Spacing.md,
+    paddingTop: Spacing.xl,
     paddingBottom: Spacing.xs,
-    gap: Spacing.xs,
   },
-  selectedDateLabel: {
-    fontSize: 17,
-    fontWeight: '600' as const,
-    letterSpacing: -0.2,
+  selectedLabel: {
+    ...Typography.label,
   },
-  todoCountBadge: {
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 10,
-    minWidth: 24,
-    alignItems: 'center',
-  },
-  todoCountText: {
-    fontSize: 12,
-    fontWeight: '700' as const,
-  },
-  todoList: {
-    paddingBottom: Spacing.md,
-    paddingTop: Spacing.xxs,
+  selectedCount: {
+    fontSize: 13,
+    fontVariant: ['tabular-nums'],
   },
 });

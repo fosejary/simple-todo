@@ -1,18 +1,11 @@
 import React, { useState, useEffect } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  Pressable,
-  StyleSheet,
-  Platform,
-  Alert,
-  Modal,
-} from 'react-native';
+import { View, Pressable, StyleSheet, Platform, Alert, Modal } from 'react-native';
 import { MaterialIcons } from '@expo/vector-icons';
 import { useTranslation } from 'react-i18next';
+import { Text, TextInput } from '@/components/atoms/AppText';
+import { Icon } from '@/components/atoms/Icon';
 import { useTheme } from '@/hooks/useTheme';
-import { Spacing } from '@/constants/theme';
+import { Spacing, Radius } from '@/constants/theme';
 import { Category, CATEGORY_COLORS, CATEGORY_ICONS } from '@/lib/types';
 import { useTodoStore } from '@/stores/todoStore';
 
@@ -97,15 +90,13 @@ export function CategoryEditor({ category, visible, onClose, onDeleted }: Catego
               {isEdit ? t('categoryEditor.edit') : t('categoryEditor.new')}
             </Text>
             <Pressable onPress={onClose} hitSlop={8}>
-              <MaterialIcons name="close" size={22} color={colors.textSecondary} />
+              <Icon name="x" size={22} color={colors.textSecondary} />
             </Pressable>
           </View>
 
           {/* Preview */}
-          <View style={[styles.preview, { backgroundColor: `${color}15` }]}>
-            <View style={[styles.previewIcon, { backgroundColor: `${color}25` }]}>
-              <MaterialIcons name={icon as any} size={24} color={color} />
-            </View>
+          <View style={[styles.preview, { backgroundColor: colors.surfaceSunken }]}>
+            <MaterialIcons name={icon as any} size={24} color={color} />
             <Text style={[styles.previewName, { color: name.trim() ? colors.textPrimary : colors.textDisabled }]}>
               {name.trim() || t('categoryEditor.namePlaceholder')}
             </Text>
@@ -126,17 +117,17 @@ export function CategoryEditor({ category, visible, onClose, onDeleted }: Catego
           <View style={[styles.tabBar, { borderBottomColor: colors.divider }]}>
             <Pressable
               onPress={() => setTab('icon')}
-              style={[styles.tab, tab === 'icon' && { borderBottomColor: colors.primary, borderBottomWidth: 2 }]}
+              style={[styles.tab, tab === 'icon' && { borderBottomColor: colors.textPrimary, borderBottomWidth: 2 }]}
             >
-              <Text style={[styles.tabText, { color: tab === 'icon' ? colors.primary : colors.textDisabled }]}>
+              <Text style={[styles.tabText, { color: tab === 'icon' ? colors.textPrimary : colors.textTertiary }]}>
                 {t('categoryEditor.icon')}
               </Text>
             </Pressable>
             <Pressable
               onPress={() => setTab('color')}
-              style={[styles.tab, tab === 'color' && { borderBottomColor: colors.primary, borderBottomWidth: 2 }]}
+              style={[styles.tab, tab === 'color' && { borderBottomColor: colors.textPrimary, borderBottomWidth: 2 }]}
             >
-              <Text style={[styles.tabText, { color: tab === 'color' ? colors.primary : colors.textDisabled }]}>
+              <Text style={[styles.tabText, { color: tab === 'color' ? colors.textPrimary : colors.textTertiary }]}>
                 {t('categoryEditor.color')}
               </Text>
             </Pressable>
@@ -153,7 +144,7 @@ export function CategoryEditor({ category, visible, onClose, onDeleted }: Catego
                     style={[
                       styles.gridItem,
                       {
-                        backgroundColor: icon === ic ? `${color}20` : 'transparent',
+                        backgroundColor: icon === ic ? colors.surfaceVariant : 'transparent',
                         borderColor: icon === ic ? color : 'transparent',
                         borderWidth: icon === ic ? 1.5 : 0,
                       },
@@ -182,7 +173,7 @@ export function CategoryEditor({ category, visible, onClose, onDeleted }: Catego
                       },
                     ]}
                   >
-                    {color === c && <MaterialIcons name="check" size={14} color="#FFF" />}
+                    {color === c && <Icon name="check" size={14} color="#FFFFFF" />}
                   </Pressable>
                 ))}
               </View>
@@ -193,15 +184,15 @@ export function CategoryEditor({ category, visible, onClose, onDeleted }: Catego
           <View style={styles.actions}>
             {isEdit && (
               <Pressable onPress={handleDelete} style={[styles.deleteBtn, { backgroundColor: colors.errorContainer }]}>
-                <MaterialIcons name="delete-outline" size={18} color={colors.error} />
+                <Icon name="trash-2" size={18} color={colors.error} />
               </Pressable>
             )}
             <Pressable
               onPress={handleSave}
               disabled={!name.trim()}
-              style={[styles.saveBtn, { backgroundColor: name.trim() ? colors.primary : colors.outline }]}
+              style={[styles.saveBtn, { backgroundColor: name.trim() ? colors.primary : colors.surfaceVariant }]}
             >
-              <Text style={styles.saveBtnText}>{isEdit ? t('categoryEditor.save') : t('detail.add')}</Text>
+              <Text style={[styles.saveBtnText, { color: name.trim() ? colors.onPrimary : colors.textTertiary }]}>{isEdit ? t('categoryEditor.save') : t('detail.add')}</Text>
             </Pressable>
           </View>
         </View>
@@ -213,15 +204,15 @@ export function CategoryEditor({ category, visible, onClose, onDeleted }: Catego
 const styles = StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: 'rgba(0,0,0,0.4)',
+    backgroundColor: 'rgba(26,26,24,0.4)',
     justifyContent: 'center',
     alignItems: 'center',
   },
   modal: {
     width: '90%',
     maxWidth: 360,
-    borderRadius: 20,
-    padding: Spacing.lg,
+    borderRadius: Radius.sheet - 4,
+    padding: Spacing.xl,
   },
   header: {
     flexDirection: 'row',
@@ -231,22 +222,15 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 18,
-    fontWeight: '700' as const,
+    fontWeight: '600' as const,
   },
   preview: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: Spacing.sm,
     padding: Spacing.sm,
-    borderRadius: 12,
+    borderRadius: Radius.control + 2,
     marginBottom: Spacing.sm,
-  },
-  previewIcon: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
-    alignItems: 'center',
-    justifyContent: 'center',
   },
   previewName: {
     fontSize: 16,
@@ -319,7 +303,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   saveBtnText: {
-    color: '#FFFFFF',
     fontSize: 15,
     fontWeight: '600' as const,
   },
